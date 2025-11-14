@@ -1,0 +1,369 @@
+import os
+import json
+import functools
+import datetime
+from flask import (
+    Flask, render_template, request, redirect, url_for, session, g,
+    jsonify, flash, abort
+)
+from sqlalchemy import desc, or_
+from sqlalchemy.exc import IntegrityError
+from waitress import serve
+
+from database import SessionLocal, User, BlockedKeyword, init_db
+
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+CONFIG_FILE = 'config.json'
+DATABASE_FILE = 'bot_data.db'
+
+
+def is_configured():
+    return os.path.exists(CONFIG_FILE)
+
+
+def get_config():
+    if not is_configured():
+        return {}
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except (IOError, json.JSONDecodeError):
+        return {}
+
+
+@app.before_request
+def load_db_session():
+    if is_configured() and request.endpoint not in ['setup', 'static']:
+        if not os.path.exists(DATABASE_FILE):
+            init_db()
+        g.db = SessionLocal()
+
+
+@app.teardown_request
+def close_db_session(exception=None):
+    db = g.get('db')
+    if db is not None:
+        db.close()
+
+
+@app.before_request
+def check_configuration():
+    if not is_configured() and request.endpoint not in ['setup', 'static']:
+        return redirect(url_for('setup'))
+
+    if is_configured() and request.endpoint == 'setup':
+        return redirect(url_for('login'))
+
+
+def login_required(view):
+    @functools.wraps(view)
+    def wrapped_view(**kwargs):
+        config = get_config()
+        if 'logged_in' not in session:
+            if not config.get('WEB_PANEL_USER'):
+                return redirect(url_for('login'))
+            return redirect(url_for('login'))
+        return view(**kwargs)
+
+    return wrapped_view
+
+
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    if is_configured():
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        config = {}
+        config['BOT_TOKEN'] = request.form.get('bot_token')
+        config['ADMIN_ID'] = request.form.get('admin_id')
+        config['WEB_PANEL_USER'] = request.form.get('web_user')
+        config['WEB_PANEL_PASS'] = request.form.get('web_pass')
+
+        if not all([config['BOT_TOKEN'], config['ADMIN_ID'], config['WEB_PANEL_USER'], config['WEB_PANEL_PASS']]):
+            flash('所有字段均为必填项。', 'error')
+            return render_template('setup.html')
+
+        try:
+            int(config['ADMIN_ID'])
+        except ValueError:
+            flash('管理员 UID 必须是纯数字。', 'error')
+            return render_template('setup.html')
+
+        config['SECRET_KEY'] = os.urandom(24).hex()
+
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=4)
+
+            init_db()
+            app.secret_key = config['SECRET_KEY']
+
+            flash('配置成功！请登录。', 'success')
+            return redirect(url_for('login'))
+
+        except IOError as e:
+            flash(f'写入配置文件失败: {e}', 'error')
+
+    return render_template('setup.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if 'logged_in' in session:
+        return redirect(url_for('dashboard'))
+
+    config = get_config()
+
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        if (username == config.get('WEB_PANEL_USER') and
+                password == config.get('WEB_PANEL_PASS')):
+
+            session['logged_in'] = True
+            app.secret_key = config.get('SECRET_KEY')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('用户名或密码错误', 'error')
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+
+@app.route('/')
+@login_required
+def dashboard():
+    config = get_config()
+    return render_template('dashboard.html', admin_user=config.get('WEB_PANEL_USER', 'Admin'))
+
+@app.route('/api/stats')
+@login_required
+def api_stats():
+    total_users = g.db.query(User).count()
+    blocked_users = g.db.query(User).filter_by(is_blocked=True).count()
+    verified_users = g.db.query(User).filter_by(is_verified=True).count()
+    total_keywords = g.db.query(BlockedKeyword).count()
+
+    return jsonify({
+        'total_users': total_users,
+        'blocked_users': blocked_users,
+        'verified_users': verified_users,
+        'total_keywords': total_keywords
+    })
+
+
+@app.route('/api/keywords', methods=['GET'])
+@login_required
+def api_get_keywords():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    query_str = request.args.get('search', '').strip().lower()
+
+    query = g.db.query(BlockedKeyword)
+
+    if query_str:
+        search_term = f"%{query_str}%"
+        query = query.filter(BlockedKeyword.keyword.like(search_term))
+
+    total = query.count()
+
+    keywords = query.order_by(desc(BlockedKeyword.added_at))\
+                    .offset((page - 1) * per_page)\
+                    .limit(per_page)\
+                    .all()
+
+    return jsonify({
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page,
+        'keywords': [
+            {'id': kw.id, 'keyword': kw.keyword, 'added_at': kw.added_at.isoformat()}
+            for kw in keywords
+        ]
+    })
+
+
+@app.route('/api/keywords', methods=['POST'])
+@login_required
+def api_add_keyword():
+    data = request.get_json(force=True, silent=True) or {}
+    keywords = data.get('keywords') or data.get('keyword')
+
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    if not isinstance(keywords, list):
+        return jsonify({'error': '无效的参数格式'}), 400
+
+    normalized = []
+    seen = set()
+    for kw in keywords:
+        if isinstance(kw, str):
+            k = kw.strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                normalized.append(k)
+
+    if not normalized:
+        return jsonify({'error': '没有有效关键词'}), 400
+
+    db = g.db
+
+    existing_objs = db.query(BlockedKeyword).filter(
+        BlockedKeyword.keyword.in_(normalized)
+    ).all()
+    existing_set = {obj.keyword for obj in existing_objs}
+
+    to_add = [k for k in normalized if k not in existing_set]
+
+    added_objs = []
+    if to_add:
+        try:
+            for k in to_add:
+                obj = BlockedKeyword(keyword=k)
+                db.add(obj)
+                added_objs.append(obj)
+
+            db.commit()
+            for obj in added_objs:
+                db.refresh(obj)
+
+        except IntegrityError:
+            db.rollback()
+            all_objs = db.query(BlockedKeyword).filter(
+                BlockedKeyword.keyword.in_(normalized)
+            ).all()
+            return jsonify({
+                'added': [],
+                'exists': [{
+                    'id': o.id,
+                    'keyword': o.keyword,
+                    'added_at': o.added_at.isoformat()
+                } for o in all_objs]
+            }), 200
+
+        except Exception as e:
+            db.rollback()
+            return jsonify({'error': f'数据库错误: {str(e)}'}), 500
+
+    return jsonify({
+        'added': [{
+            'id': o.id,
+            'keyword': o.keyword,
+            'added_at': o.added_at.isoformat()
+        } for o in added_objs],
+        'exists': [{
+            'id': o.id,
+            'keyword': o.keyword,
+            'added_at': o.added_at.isoformat()
+        } for o in existing_objs]
+    }), (201 if added_objs else 200)
+
+
+@app.route('/api/keywords/<int:kw_id>', methods=['DELETE'])
+@login_required
+def api_delete_keyword(kw_id):
+    kw = g.db.get(BlockedKeyword, kw_id)
+    if not kw:
+        return jsonify({'error': '未找到关键词'}), 404
+
+    g.db.delete(kw)
+    g.db.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/users')
+@login_required
+def api_get_users():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    query_str = request.args.get('search', '')
+    filter_by = request.args.get('filter', 'all')
+
+    query = g.db.query(User)
+
+    if filter_by == 'blocked':
+        query = query.filter_by(is_blocked=True)
+
+    if query_str:
+        search_term = f"%{query_str}%"
+        query = query.filter(
+            or_(
+                User.id.like(search_term),
+                User.username.like(search_term),
+                User.first_name.like(search_term),
+                User.last_name.like(search_term)
+            )
+        )
+
+    total = query.count()
+    users = query.order_by(desc(User.last_seen)).offset((page - 1) * per_page).limit(per_page).all()
+
+    return jsonify({
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page,
+        'users': [
+            {
+                'id': u.id,
+                'username': u.username,
+                'first_name': u.first_name,
+                'last_name': u.last_name,
+                'lang_code': u.lang_code,
+                'is_blocked': u.is_blocked,
+                'is_verified': u.is_verified,
+                'last_seen': u.last_seen.isoformat() if u.last_seen else None
+            } for u in users
+        ]
+    })
+
+
+@app.route('/api/users/<int:user_id>/block', methods=['POST'])
+@login_required
+def api_block_user(user_id):
+    user = g.db.get(User, user_id)
+    if not user:
+        return jsonify({'error': '未找到用户'}), 404
+    user.is_blocked = True
+    g.db.commit()
+    return jsonify({'success': True, 'is_blocked': True})
+
+
+@app.route('/api/users/<int:user_id>/unblock', methods=['POST'])
+@login_required
+def api_unblock_user(user_id):
+    user = g.db.get(User, user_id)
+    if not user:
+        return jsonify({'error': '未找到用户'}), 404
+    user.is_blocked = False
+    g.db.commit()
+    return jsonify({'success': True, 'is_blocked': False})
+
+
+if __name__ == "__main__":
+    host = "0.0.0.0"
+    port = 8080
+
+    if not is_configured():
+        print("=" * 50)
+        print("系统未配置！")
+        print(f"请在浏览器中打开 http://{host}:{port}/setup 完成设置。")
+        print("=" * 50)
+    else:
+        app.secret_key = get_config().get('SECRET_KEY', os.urandom(24))
+        print("=" * 50)
+        print("Web 面板已启动。")
+        print(f"访问 http://{host}:{port}/")
+        print("=" * 50)
+
+    serve(app, host=host, port=port)

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理面板 - TG Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body data-theme="light">
+    <header class="app-header">
+        <div class="header-left">
+            <span class="app-title">TG Bot 面板</span>
+        </div>
+        <div class="user-profile">
+            <span>欢迎，{{ admin_user }}</span>
+            <a href="{{ url_for('logout') }}">退出登录</a>
+        </div>
+    </header>
+    <div class="app-body">
+        <div class="sidebar" id="sidebar">
+            <button id="sidebar-toggle" class="sidebar-toggle sidebar-toggle-inner">≡</button>
+            <ul class="nav-menu">
+                <li class="nav-item"><a href="#" data-page="dashboard" class="active"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg><span>仪表盘</span></a></li>
+                <li class="nav-item"><a href="#" data-page="users"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg><span>用户管理</span></a></li>
+                <li class="nav-item"><a href="#" data-page="keywords"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg><span>屏蔽关键词</span></a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="theme-selector">
+                    <button class="dropdown-btn">
+                        <svg class="theme-icon"></svg>
+                        <span class="theme-label">Auto</span>
+                    </button>
+                    <div class="dropdown-menu">
+                        <div data-theme="light">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                            <span class="theme-text">Light</span>
+                        </div>
+                        <div data-theme="dark">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                            <span class="theme-text">Dark</span>
+                        </div>
+                        <div data-theme="auto">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06 .06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82 .33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                            <span class="theme-text">Auto</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="main-content">
+            <div class="content-header">
+                <h1 id="page-title">仪表盘</h1>
+            </div>
+
+            <div id="dashboard-page" class="page active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>总用户数</h3>
+                        <div class="value" id="total-users">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>已屏蔽用户</h3>
+                        <div class="value" id="blocked-users">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>已验证用户</h3>
+                        <div class="value" id="verified-users">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>屏蔽关键词</h3>
+                        <div class="value" id="total-keywords">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="users-page" class="page">
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>用户列表</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" id="user-search" placeholder="搜索用户名、ID 或姓名...">
+                            <select id="user-filter">
+                                <option value="all">所有用户</option>
+                                <option value="blocked">已屏蔽用户</option>
+                            </select>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>用户名 / 姓名</th>
+                                    <th>用户 ID</th>
+                                    <th>状态</th>
+                                    <th>最后活跃</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="user-list-tbody"></tbody>
+                        </table>
+                        <div id="user-pagination"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="keywords-page" class="page">
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>屏蔽关键词管理</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" id="keyword-search" placeholder="搜索关键词...">
+                            <select id="keyword-filter">
+                                <option value="all">所有关键词</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group keyword-input-group">
+                            <textarea id="keyword-input" placeholder="输入关键词，一行一个"></textarea>
+                            <button id="add-keyword-btn" class="btn">添加</button>
+                        </div>
+
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>关键词</th>
+                                    <th>添加时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="keyword-list-tbody"></tbody>
+                        </table>
+
+                        <div id="keyword-pagination"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="toast-container"></div>
+    <div id="custom-modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title">确认操作</h3>
+            <p id="modal-message">您确定要执行此操作吗？</p>
+            <div class="modal-actions">
+                <button id="modal-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="modal-confirm-btn" class="btn btn-danger">确认</button>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
