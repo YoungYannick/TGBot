@@ -53,7 +53,7 @@
             </div>
 
             <div id="dashboard-page" class="page active">
-                <div class="stats-grid">
+                <div class="stats-grid" id="overall-stats">
                     <div class="stat-card">
                         <h3>总用户数</h3>
                         <div class="value" id="total-users">0</div>
@@ -69,6 +69,38 @@
                     <div class="stat-card">
                         <h3>屏蔽关键词</h3>
                         <div class="value" id="total-keywords">0</div>
+                    </div>
+                </div>
+
+                <div class="stats-grid" id="today-stats">
+                    <div class="stat-card">
+                        <h3>今日新增用户</h3>
+                        <div class="value" id="new-users-today">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>今日对话用户数</h3>
+                        <div class="value" id="dialog-users-today">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>今日对话条数</h3>
+                        <div class="value" id="messages-today">0</div>
+                    </div>
+                </div>
+
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>消息统计</h2>
+                        <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+                            <label for="range-select" style="font-weight:500; color:var(--text-secondary-color);">时间范围</label>
+                            <select id="range-select">
+                                <option value="7">最近7天</option>
+                                <option value="30">最近30天</option>
+                                <option value="90">最近90天</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="messagesChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -149,6 +181,26 @@
             </div>
         </div>
     </div>
+    <div id="chat-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <h3>聊天记录</h3>
+
+        <div class="input-group">
+            <input type="text" id="chat-search" placeholder="搜索内容">
+            <input type="date" id="chat-start">
+            <input type="date" id="chat-end">
+        </div>
+
+        <div id="chat-list" style="max-height: 300px; overflow-y: auto;"></div>
+
+        <div id="chat-pagination" style="margin-top: 1rem;"></div>
+
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="chat-close">关闭</button>
+        </div>
+    </div>
+</div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

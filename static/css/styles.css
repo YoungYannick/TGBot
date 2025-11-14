@@ -374,6 +374,7 @@ body {
     margin-bottom: 1.5rem;
     overflow: hidden;
     transition: transform 0.2s ease;
+    width: 100%;
 }
 
 .card-header {
@@ -388,6 +389,8 @@ body {
 
 .card-body {
     padding: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .input-group {
@@ -406,7 +409,7 @@ body {
     width: auto;
 }
 
-input[type="text"], textarea, select {
+input[type="text"], input[type="date"], textarea, select {
     flex-grow: 1;
     padding: 0.75rem;
     border: 1px solid var(--border-color);
@@ -528,6 +531,12 @@ tr:hover {
 
 .btn-sm:active {
     transform: scale(0.98);
+}
+
+.user-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
 }
 
 .user-info {
@@ -842,4 +851,10 @@ hr {
     font-size: 1rem;
     border-radius: 8px;
     font-weight: 500;
+}
+
+#messagesChart {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 15vh;
 }

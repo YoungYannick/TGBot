@@ -19,7 +19,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function customConfirm(title, message, confirmText = '确认', confirmStyle = 'btn-danger') {
         modalTitle.textContent = title;
         modalMessage.textContent = message;
-
         modalConfirmBtn.textContent = confirmText;
         modalConfirmBtn.className = `btn ${confirmStyle}`;
         customModal.style.display = 'flex';
@@ -27,30 +26,22 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 customModal.classList.add('show');
             }, 10);
-
             const transitionEndHandler = (e) => {
                 if (e.target !== customModal || e.propertyName !== 'opacity') return;
-
                 if (!customModal.classList.contains('show')) {
                     customModal.style.display = 'none';
                     customModal.removeEventListener('transitionend', transitionEndHandler);
                 }
             };
-
             customModal.addEventListener('transitionend', transitionEndHandler);
-
             const handleConfirmation = (result) => {
                 customModal.classList.remove('show');
-
                 modalConfirmBtn.removeEventListener('click', confirmListener);
                 modalCancelBtn.removeEventListener('click', cancelListener);
-
                 resolve(result);
             };
-
             const confirmListener = () => handleConfirmation(true);
             const cancelListener = () => handleConfirmation(false);
-
             modalConfirmBtn.addEventListener('click', confirmListener);
             modalCancelBtn.addEventListener('click', cancelListener);
         });
@@ -68,8 +59,16 @@ document.addEventListener('DOMContentLoaded', () => {
             search: '',
             filter: 'all'
         },
+        chat: {
+            userId: null,
+            page: 1,
+            search: '',
+            start: '',
+            end: ''
+        },
         sidebarCollapsed: false,
-        theme: localStorage.getItem('theme') || 'auto'
+        theme: localStorage.getItem('theme') || 'auto',
+        chart: null
     };
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -140,7 +139,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function switchPage(pageId) {
         navLinks.forEach(link => link.classList.remove('active'));
         document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
-
         pages.forEach(page => {
             page.classList.remove('active');
             if (page.id === `${pageId}-page`) {
@@ -148,13 +146,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 page.classList.add('active');
             }
         });
-
         pageTitle.textContent = {
             dashboard: '仪表盘',
             users: '用户管理',
             keywords: '屏蔽关键词'
         }[pageId];
-
         if (pageId === 'dashboard') loadStats();
         if (pageId === 'users') updateUsersAndLoad();
         if (pageId === 'keywords') updateKwAndLoad();
@@ -192,6 +188,12 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('blocked-users').textContent = data.blocked_users;
             document.getElementById('verified-users').textContent = data.verified_users;
             document.getElementById('total-keywords').textContent = data.total_keywords;
+            const today = await apiFetch('/api/today_stats');
+            document.getElementById('new-users-today').textContent = today.new_users_today;
+            document.getElementById('dialog-users-today').textContent = today.dialog_users_today;
+            document.getElementById('messages-today').textContent = today.messages_today;
+            const rangeSelect = document.getElementById('range-select');
+            loadMessageChart(parseInt(rangeSelect.value || 7));
         } catch (error) {
             showToast('加载统计数据失败', 'error');
         }
@@ -225,7 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
             tr.querySelector('button').addEventListener('click', () => deleteKeyword(kw.id, kw.keyword));
             kwTbody.appendChild(tr);
         });
-
         renderPagination(data.page, data.total_pages, kwPagination, updateKwAndLoad);
     }
 
@@ -247,9 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast('请输入关键词', 'error');
             return;
         }
-
         const keywords = inputValue.split('\n').map(k => k.trim()).filter(k => k);
-
         try {
             const { added, exists } = await apiFetch('/api/keywords', {
                 method: 'POST',
@@ -271,9 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
             '删除',
             'btn-danger'
         );
-
         if (!confirmed) return;
-
         try {
             await apiFetch(`/api/keywords/${id}`, { method: 'DELETE' });
             updateKwAndLoad();
@@ -301,54 +298,42 @@ document.addEventListener('DOMContentLoaded', () => {
         updateKwAndLoad(1);
     });
 
-
     const userTbody = document.getElementById('user-list-tbody');
     const userSearch = document.getElementById('user-search');
     const userFilter = document.getElementById('user-filter');
     const userPagination = document.getElementById('user-pagination');
 
-
     function renderPagination(currentPage, totalPages, container, loadFunc) {
         container.innerHTML = '';
         if (totalPages <= 1) return;
-
         const createBtn = (page, text = page, active = false, disabled = false) => {
             const btn = document.createElement('button');
             btn.textContent = text;
             if (page) btn.dataset.page = page;
             if (active) btn.classList.add('active');
             if (disabled) btn.disabled = true;
-
             if (page) btn.addEventListener('click', () => {
                 loadFunc(page);
             });
             return btn;
         };
-
         container.appendChild(createBtn(currentPage > 1 ? currentPage - 1 : null, '«', false, currentPage === 1));
-
         let start = Math.max(1, currentPage - 2);
         let end = Math.min(totalPages, currentPage + 2);
-
         if (start > 1) container.appendChild(createBtn(1));
         if (start > 2) container.appendChild(createBtn(null, '...', false, true));
-
         for (let i = start; i <= end; i++) {
             container.appendChild(createBtn(i, i, i === currentPage));
         }
-
         if (end < totalPages - 1) container.appendChild(createBtn(null, '...', false, true));
         if (end < totalPages) container.appendChild(createBtn(totalPages));
-
         container.appendChild(createBtn(currentPage < totalPages ? currentPage + 1 : null, '»', false, currentPage === totalPages));
     }
-
 
     function updateUsersAndLoad(page = 1) {
         state.users.currentPage = page;
         loadUsers();
     }
-
 
     function renderUsers(data) {
         userTbody.innerHTML = '';
@@ -362,11 +347,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusBadge = user.is_blocked
                 ? `<span class="badge badge-blocked">已屏蔽</span>`
                 : `<span class="badge badge-active">正常</span>`;
-
             const actionButton = user.is_blocked
                 ? `<button class="btn btn-success btn-sm" data-id="${user.id}">解禁</button>`
                 : `<button class="btn btn-danger btn-sm" data-id="${user.id}">屏蔽</button>`;
-
             tr.innerHTML = `
                 <td>
                     <div class="user-info">
@@ -377,15 +360,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><code>${user.id}</code></td>
                 <td>${statusBadge}</td>
                 <td>${formatTime(user.last_seen)}</td>
-                <td>${actionButton}</td>
+                <td>
+                    <div class="user-actions">
+                        <button class="btn btn-sm btn-primary view-chat-btn" data-id="${user.id}">查看聊天</button>
+                        ${actionButton}
+                    </div>
+                </td>
             `;
+            tr.querySelector('.view-chat-btn').addEventListener('click', () => {
+                openChatModal(user.id);
+            });
 
-            tr.querySelector('button').addEventListener('click', () => {
+            tr.querySelector('.btn-danger, .btn-success').addEventListener('click', () => {
                 toggleUserBlock(user.id, !user.is_blocked);
             });
             userTbody.appendChild(tr);
         });
-
         renderPagination(data.page, data.total_pages, userPagination, updateUsersAndLoad);
     }
 
@@ -406,16 +396,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const confirmMsg = shouldBlock ? '确定要屏蔽此用户吗？' : '确定要解禁此用户吗？';
         const confirmStyle = shouldBlock ? 'btn-danger' : 'btn-success';
         const confirmText = shouldBlock ? '屏蔽' : '解禁';
-
-        const confirmed = await customConfirm(
-            title,
-            confirmMsg,
-            confirmText,
-            confirmStyle
-        );
-
+        const confirmed = await customConfirm(title, confirmMsg, confirmText, confirmStyle);
         if (!confirmed) return;
-
         try {
             await apiFetch(`/api/users/${userId}/${action}`, { method: 'POST' });
             showToast(shouldBlock ? '用户已屏蔽' : '用户已解禁');
@@ -443,9 +425,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isoString) return 'N/A';
         try {
             const date = new Date(isoString);
-
             const pad = (num, length = 2) => String(num).padStart(length, '0');
-
             const year = date.getFullYear();
             const month = pad(date.getMonth() + 1);
             const day = pad(date.getDate());
@@ -466,6 +446,123 @@ document.addEventListener('DOMContentLoaded', () => {
             timeout = setTimeout(() => func.apply(this, args), delay);
         };
     }
+
+    const chartCanvas = document.getElementById('messagesChart');
+    function createOrUpdateChart(labels, data) {
+        if (state.chart) {
+            state.chart.data.labels = labels;
+            state.chart.data.datasets[0].data = data;
+            state.chart.update();
+            return;
+        }
+        const ctx = chartCanvas.getContext('2d');
+        state.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '消息数',
+                    data: data,
+                    fill: true,
+                    tension: 0.2
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: { display: true },
+                    y: { display: true, beginAtZero: true }
+                }
+            }
+        });
+    }
+
+    async function loadMessageChart(rangeDays = 7) {
+        try {
+            const data = await apiFetch(`/api/message_stats?range=${rangeDays}`);
+            const labels = data.data.map(d => d.date);
+            const counts = data.data.map(d => d.count);
+            createOrUpdateChart(labels, counts);
+        } catch (e) {
+            showToast('加载消息统计失败', 'error');
+        }
+    }
+
+    const rangeSelect = document.getElementById('range-select');
+    rangeSelect.addEventListener('change', () => {
+        loadMessageChart(parseInt(rangeSelect.value));
+    });
+
+    function openChatModal(userId) {
+        state.chat.userId = userId;
+        state.chat.page = 1;
+        loadChatMessages();
+        const modal = document.getElementById('chat-modal');
+        modal.style.display = 'flex';
+        setTimeout(() => modal.classList.add('show'), 10);
+    }
+
+    async function loadChatMessages() {
+        const s = state.chat;
+        const url = `/api/user_messages?user_id=${s.userId}&page=${s.page}&search=${encodeURIComponent(s.search)}&start=${s.start}&end=${s.end}`;
+        try {
+            const data = await apiFetch(url);
+
+            const list = document.getElementById('chat-list');
+            list.innerHTML = '';
+
+            if (data.messages.length === 0) {
+                list.innerHTML = `<p style="color:var(--text-secondary-color);text-align:center;">无聊天记录</p>`;
+            } else {
+                data.messages.forEach(m => {
+                    const div = document.createElement('div');
+                    div.style.padding = '0.5rem 0';
+                    div.innerHTML = `
+                        <div style="font-size:0.85rem;color:var(--text-secondary-color);">${formatTime(m.sent_at)}</div>
+                        <div>${escapeHTML(m.text || '')}</div>
+                        <hr>
+                    `;
+                    list.appendChild(div);
+                });
+            }
+
+            renderPagination(data.page, data.total_pages, document.getElementById('chat-pagination'), (p) => {
+                state.chat.page = p;
+                loadChatMessages();
+            });
+
+        } catch(e) {
+            showToast('加载聊天记录失败', 'error');
+        }
+    }
+
+    document.getElementById('chat-search').addEventListener('input', debounce(() => {
+        state.chat.search = document.getElementById('chat-search').value.trim();
+        state.chat.page = 1;
+        loadChatMessages();
+    }, 300));
+
+    document.getElementById('chat-start').addEventListener('change', () => {
+        state.chat.start = document.getElementById('chat-start').value;
+        state.chat.page = 1;
+        loadChatMessages();
+    });
+
+    document.getElementById('chat-end').addEventListener('change', () => {
+        state.chat.end = document.getElementById('chat-end').value;
+        state.chat.page = 1;
+        loadChatMessages();
+    });
+
+    document.getElementById('chat-close').addEventListener('click', () => {
+        const modal = document.getElementById('chat-modal');
+        modal.classList.remove('show');
+        setTimeout(() => modal.style.display = 'none', 300);
+    });
 
     switchPage('dashboard');
 });
