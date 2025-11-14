@@ -187,7 +187,7 @@ def api_get_keywords():
         'per_page': per_page,
         'total_pages': (total + per_page - 1) // per_page,
         'keywords': [
-            {'id': kw.id, 'keyword': kw.keyword, 'added_at': kw.added_at.isoformat()}
+            {'id': kw.id, 'keyword': kw.keyword, 'added_at': kw.added_at.isoformat() if kw.added_at else None}
             for kw in keywords
         ]
     })
@@ -228,8 +228,9 @@ def api_add_keyword():
     added_objs = []
     if to_add:
         try:
+            now = datetime.datetime.utcnow()
             for k in to_add:
-                obj = BlockedKeyword(keyword=k)
+                obj = BlockedKeyword(keyword=k, added_at=now)
                 db.add(obj)
                 added_objs.append(obj)
 
@@ -247,7 +248,7 @@ def api_add_keyword():
                 'exists': [{
                     'id': o.id,
                     'keyword': o.keyword,
-                    'added_at': o.added_at.isoformat()
+                    'added_at': o.added_at.isoformat() if o.added_at else None
                 } for o in all_objs]
             }), 200
 
@@ -259,12 +260,12 @@ def api_add_keyword():
         'added': [{
             'id': o.id,
             'keyword': o.keyword,
-            'added_at': o.added_at.isoformat()
+            'added_at': o.added_at.isoformat() if o.added_at else None
         } for o in added_objs],
         'exists': [{
             'id': o.id,
             'keyword': o.keyword,
-            'added_at': o.added_at.isoformat()
+            'added_at': o.added_at.isoformat() if o.added_at else None
         } for o in existing_objs]
     }), (201 if added_objs else 200)
 

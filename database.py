@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, BigInteger, DateTime
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, BigInteger, DateTime, Text, ForeignKey
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.sql import func
 import datetime
 
@@ -10,7 +10,6 @@ Base = declarative_base()
 
 
 class User(Base):
-    """ 存储所有交互过的用户 """
     __tablename__ = "users"
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=False)
     username = Column(String, nullable=True)
@@ -21,28 +20,40 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     is_blocked = Column(Boolean, default=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_seen = Column(DateTime(timezone=True), onupdate=func.now(), default=func.now())
+    created_at = Column(DateTime(timezone=True))
+    last_seen = Column(DateTime(timezone=True), onupdate=func.now())
+
+    sent_messages = relationship("SentMessage", back_populates="sender")
 
 
 class BlockedKeyword(Base):
-    """ 存储屏蔽的关键词 """
     __tablename__ = "blocked_keywords"
     id = Column(Integer, primary_key=True, index=True)
     keyword = Column(String, unique=True, index=True, nullable=False)
-    added_at = Column(DateTime(timezone=True), server_default=func.now())
+    added_at = Column(DateTime(timezone=True))
+
 
 class MessageMap(Base):
-    """ 保存 admin 收到的每条转发消息 与 原用户 ID 的映射 """
     __tablename__ = "message_map"
     admin_msg_id = Column(BigInteger, primary_key=True)
     user_id = Column(BigInteger, nullable=False)
 
+
 class StartMessage(Base):
     __tablename__ = "start_message"
     id = Column(Integer, primary_key=True)
-    lang = Column(String, unique=True, nullable=False)   # zh / en
+    lang = Column(String, unique=True, nullable=False)
     content = Column(String, nullable=False)
+
+
+class SentMessage(Base):
+    __tablename__ = "sent_messages"
+    pk_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)
+    message_text = Column(Text, nullable=True)
+    sent_at = Column(DateTime(timezone=True))
+
+    sender = relationship("User", back_populates="sent_messages")
 
 
 def init_db():
@@ -53,7 +64,6 @@ def init_db():
 
     from database import StartMessage
 
-    # 如果没有欢迎语记录，则初始化
     if db.query(StartMessage).count() == 0:
         zh_text = """🤖 欢迎使用 Yannick Young 传话筒
 

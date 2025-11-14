@@ -19,7 +19,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode, ChatType
 from telegram.helpers import escape_markdown
 
-from database import SessionLocal, User, BlockedKeyword, init_db
+from database import SessionLocal, User, BlockedKeyword, init_db, SentMessage
 
 CONFIG_FILE = 'config.json'
 DATABASE_FILE = 'bot_data.db'
@@ -30,6 +30,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 perPage = 5
+
+CST_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def now_cst():
+    return datetime.datetime.now(CST_TZ)
+
 
 def load_bot_config():
     if not os.path.exists(CONFIG_FILE):
@@ -53,7 +60,8 @@ VERIFICATION_TOKENS = {}
 
 def get_or_create_user(session, user_data: dict):
     user = session.get(User, user_data['id'])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    # 统一使用北京时间
+    now = now_cst()
 
     if user:
         user.username = user_data.get('username')
@@ -70,6 +78,7 @@ def get_or_create_user(session, user_data: dict):
             lang_code=user_data.get('language_code'),
             is_verified=False,
             is_blocked=False,
+            created_at=now,
             last_seen=now
         )
         session.add(user)
@@ -123,7 +132,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_verification(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    expiry = datetime.datetime.now() + datetime.timedelta(minutes=10)
+    expiry = now_cst() + datetime.timedelta(minutes=10)
     VERIFICATION_TOKENS[chat_id] = (token, expiry)
 
     if lang.startswith('zh'):
@@ -151,7 +160,7 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
 
     if (stored_token_data and
             stored_token_data[0] == token and
-            stored_token_data[1] > datetime.datetime.now()):
+            stored_token_data[1] > now_cst()):
 
         db_session = SessionLocal()
         try:
@@ -178,6 +187,7 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
         else:
             await query.edit_message_text(
                 "Verification failed or expired. Please send a message again to get verified.")
+
 
 async def view_blocked_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -207,6 +217,7 @@ async def view_blocked_user_callback(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text(info_card, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     finally:
         db_session.close()
+
 
 async def secondary_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -247,7 +258,7 @@ async def secondary_menu_callback(update: Update, context: ContextTypes.DEFAULT_
                 try:
                     await context.bot.send_message(user_id, "🎉 您已被管理员解除屏蔽，现在可以正常发送消息了。")
                 except Exception as e:
-                    logger.warning(f"向用户 {user_id} 发送解封通知失败: {e}")
+                    logger.warning(f"Failed to send unblock notification to user {user_id}: {e}")
             else:
                 await query.edit_message_text("❌ 未找到用户。")
         finally:
@@ -256,13 +267,14 @@ async def secondary_menu_callback(update: Update, context: ContextTypes.DEFAULT_
     elif data == "return_to_list":
         await query.edit_message_text("↩️ 已返回到列表。请重新使用 /listblock_all 查看更新列表。")
 
+
 def get_blocked_list_page_content(users, page, per_page):
     total_users = len(users)
     if total_users == 0:
         return "🚫 当前没有被屏蔽的用户。", None
 
     total_pages = (total_users + per_page - 1) // per_page
-    page = max(1, min(page, total_pages))  # 强制调整到有效页码，继续显示
+    page = max(1, min(page, total_pages))
 
     start = (page - 1) * per_page
     end = start + per_page
@@ -279,17 +291,17 @@ def get_blocked_list_page_content(users, page, per_page):
 
         keyboard.append([InlineKeyboardButton(f"查看 {user.id}", callback_data=f"view_blocked_{user.id}")])
 
-    # 添加翻页按钮
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton("« 上一页", callback_data=f"blocked_page_{page-1}"))
+        nav_buttons.append(InlineKeyboardButton("« 上一页", callback_data=f"blocked_page_{page - 1}"))
     if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton("下一页 »", callback_data=f"blocked_page_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("下一页 »", callback_data=f"blocked_page_{page + 1}"))
     if nav_buttons:
         keyboard.append(nav_buttons)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     return text, reply_markup
+
 
 async def blocked_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -309,6 +321,7 @@ async def blocked_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     finally:
         db_session.close()
+
 
 async def user_info_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -333,7 +346,7 @@ async def user_info_callback_handler(update: Update, context: ContextTypes.DEFAU
         await query.message.reply_text(info_card, parse_mode=ParseMode.HTML)
 
     except Exception as e:
-        logger.error(f"处理 user_info 回调时出错: {e}")
+        logger.error(f"Error processing user_info callback: {e}")
         await query.message.reply_text(f"❌ 发生错误: {e}")
     finally:
         db_session.close()
@@ -385,12 +398,22 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
 
         try:
             forwarded_msg = await message.forward(ADMIN_ID)
+
             from database import MessageMap
             db_session.add(MessageMap(admin_msg_id=forwarded_msg.message_id, user_id=user.id))
+
+            message_content = message.text or message.caption
+            db_session.add(SentMessage(
+                user_id=user.id,
+                message_text=(message_content[:500] + '...') if message_content and len(
+                    message_content) > 500 else message_content,
+                sent_at=now_cst()
+            ))
+
             db_session.commit()
 
         except Exception as e:
-            logger.error(f"转发消息失败: {e}")
+            logger.error(f"Failed to forward message: {e}")
             if lang.startswith('zh'):
                 await message.reply_text("抱歉，您的消息未能成功转发给管理员，请稍后再试。")
             else:
@@ -474,7 +497,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if exists:
                 await message.reply_text(f"关键词 <code>{escape_html(kw)}</code> 已存在。", parse_mode=ParseMode.HTML)
             else:
-                new_kw = BlockedKeyword(keyword=kw)
+                new_kw = BlockedKeyword(keyword=kw, added_at=now_cst())
                 db_session.add(new_kw)
                 db_session.commit()
                 await message.reply_text(f"✅ 已添加屏蔽关键词：<code>{escape_html(kw)}</code>",
@@ -512,7 +535,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         if command == '/listblock_all':
-            users = db_session.query(User).filter_by(is_blocked=True).order_by(User.id).all()  # 添加order_by以稳定排序
+            users = db_session.query(User).filter_by(is_blocked=True).order_by(User.id).all()
             if not users:
                 await message.reply_text("🚫 当前没有被屏蔽的用户。")
                 return
@@ -553,7 +576,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     }
                     target_user = get_or_create_user(db_session, user_data)
                 except Exception as e:
-                    logger.error(f"无法在数据库中找到用户 {target_user_id} 且无法从TG获取: {e}")
+                    logger.error(f"Could not find user {target_user_id} in DB and could not fetch from TG: {e}")
                     await message.reply_text(f"数据库中未找到用户 <code>{target_user_id}</code>。",
                                              parse_mode=ParseMode.HTML)
                     return
@@ -565,7 +588,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 try:
                     await context.bot.send_message(target_user_id, "🚫 您已被管理员屏蔽，无法发送消息。")
                 except Exception as e:
-                    logger.warning(f"向用户 {target_user_id} 发送被屏蔽通知失败: {e}")
+                    logger.warning(f"Failed to send block notification to user {target_user_id}: {e}")
 
             elif command == '/unblock':
                 target_user.is_blocked = False
@@ -574,14 +597,14 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 try:
                     await context.bot.send_message(target_user_id, "🎉 您已被管理员解除屏蔽，现在可以正常发送消息了。")
                 except Exception as e:
-                    logger.warning(f"向用户 {target_user_id} 发送解封通知失败: {e}")
+                    logger.warning(f"Failed to send unblock notification to user {target_user_id}: {e}")
 
             elif command == '/checkblock' or command == '/info':
                 info_card = format_user_info_card(target_user)
                 await message.reply_text(info_card, parse_mode=ParseMode.HTML)
     except Exception as e:
         await message.reply_text(f"❌ 命令执行失败：\n{escape_html(str(e))}", parse_mode=ParseMode.HTML)
-        logger.error(f"执行管理员命令 {command} 时出错: {e}", exc_info=True)
+        logger.error(f"Error executing admin command {command}: {e}", exc_info=True)
     finally:
         db_session.close()
 
@@ -613,20 +636,20 @@ def main():
         if BOT_CONFIG:
             try:
                 ADMIN_ID = int(BOT_CONFIG['ADMIN_ID'])
-                logger.info("配置加载成功，正在启动机器人...")
+                logger.info("Configuration loaded successfully, starting bot...")
                 break
             except (ValueError, TypeError):
-                logger.error(f"{CONFIG_FILE} 中的 ADMIN_ID 格式不正确。请检查。")
+                logger.error(f"ADMIN_ID format in {CONFIG_FILE} is incorrect. Please check.")
                 time.sleep(10)
         else:
-            logger.warning(f"未找到或未完成 {CONFIG_FILE} 配置，等待 Web 面板设置...")
-            logger.warning(f"请先运行 'python app.py' 并通过网页完成设置。")
+            logger.warning(f"Could not find or complete {CONFIG_FILE} configuration, waiting for Web panel setup...")
+            logger.warning(f"Please run 'python app.py' first and complete setup via web.")
             time.sleep(10)
 
     if not os.path.exists(DATABASE_FILE):
-        logger.info("未找到数据库，正在初始化...")
+        logger.info("Database not found, initializing...")
         init_db()
-        logger.info("数据库初始化完成。")
+        logger.info("Database initialization complete.")
 
     app = Application.builder().token(BOT_CONFIG['BOT_TOKEN']).build()
 
@@ -644,9 +667,6 @@ def main():
 
     app.add_handler(CallbackQueryHandler(verification_callback_handler, pattern="^verify_"))
 
-    # 删掉了 user_info_callback_handler 因为按钮没了，这个也没用了
-    # app.add_handler(CallbackQueryHandler(user_info_callback_handler, pattern="^userinfo_"))
-
     user_filter = (~admin_filter) & filters.ChatType.PRIVATE
     app.add_handler(CommandHandler("start", start_handler, filters=user_filter))
     app.add_handler(MessageHandler(
@@ -660,7 +680,7 @@ def main():
 
     app.post_init = set_admin_commands
 
-    logger.info("机器人正在运行...")
+    logger.info("Bot is running...")
     app.run_polling()
 
 
