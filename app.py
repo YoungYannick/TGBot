@@ -2,6 +2,10 @@ import os
 import json
 import functools
 import datetime
+import subprocess
+import psutil
+import sys
+import atexit
 from zoneinfo import ZoneInfo
 from flask import (
     Flask, render_template, request, redirect, url_for, session, g,
@@ -12,24 +16,39 @@ from sqlalchemy.exc import IntegrityError
 from waitress import serve
 from database import SessionLocal, User, BlockedKeyword, SentMessage, init_db
 
+from database import init_db
+init_db()
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-CONFIG_FILE = 'config.json'
 DATABASE_FILE = 'bot_data.db'
 SH_TZ = ZoneInfo('Asia/Shanghai')
 
 def is_configured():
-    return os.path.exists(CONFIG_FILE)
+    from database import SessionLocal, Config
+    db = SessionLocal()
+    exists = db.query(Config).first() is not None
+    db.close()
+    return exists
+
 
 def get_config():
-    if not is_configured():
+    from database import SessionLocal, Config
+    db = SessionLocal()
+    c = db.query(Config).first()
+    if not c:
+        db.close()
         return {}
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except (IOError, json.JSONDecodeError):
-        return {}
+    conf = {
+        'BOT_TOKEN': c.bot_token,
+        'ADMIN_ID': c.admin_id,
+        'WEB_PANEL_USER': c.web_user,
+        'WEB_PANEL_PASS': c.web_pass,
+        'SECRET_KEY': c.secret_key
+    }
+    db.close()
+    return conf
+
 
 @app.before_request
 def load_db_session():
@@ -82,10 +101,21 @@ def setup():
             return render_template('setup.html')
         config['SECRET_KEY'] = os.urandom(24).hex()
         try:
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=4)
+            from database import SessionLocal, Config
             init_db()
+            db = SessionLocal()
+            cfg = Config(
+                bot_token=config['BOT_TOKEN'],
+                admin_id=config['ADMIN_ID'],
+                web_user=config['WEB_PANEL_USER'],
+                web_pass=config['WEB_PANEL_PASS'],
+                secret_key=config['SECRET_KEY']
+            )
+            db.add(cfg)
+            db.commit()
+            db.close()
             app.secret_key = config['SECRET_KEY']
+            start_bot()
             flash('配置成功！请登录。', 'success')
             return redirect(url_for('login'))
         except IOError as e:
@@ -420,6 +450,49 @@ def api_user_messages():
         ]
     })
 
+bot_process = None
+
+def is_bot_running():
+    for p in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmd = p.info['cmdline']
+            if cmd and 'bot.py' in " ".join(cmd):
+                return True
+        except:
+            pass
+    return False
+
+
+def start_bot():
+    global bot_process
+    if not is_bot_running():
+        print("[INFO] 正在启动 Telegram Bot（bot.py）...")
+        bot_process = subprocess.Popen(
+            [sys.executable, "bot.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+    else:
+        print("[INFO] bot.py 已在运行，无需重复启动。")
+
+def stop_bot():
+    global bot_process
+    if bot_process and bot_process.poll() is None:
+        print("[INFO] 正在停止 bot.py...")
+        try:
+            bot_process.terminate()
+        except:
+            pass
+    for p in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            if 'bot.py' in " ".join(p.info['cmdline']):
+                p.kill()
+        except:
+            pass
+    print("[INFO] bot.py 已停止。")
+
+atexit.register(stop_bot)
+
 if __name__ == "__main__":
     host = "0.0.0.0"
     port = 8080
@@ -429,6 +502,7 @@ if __name__ == "__main__":
         print(f"请在浏览器中打开 http://{host}:{port}/setup 完成设置。")
         print("=" * 50)
     else:
+        start_bot()
         app.secret_key = get_config().get('SECRET_KEY', os.urandom(24))
         print("=" * 50)
         print("Web 面板已启动。")

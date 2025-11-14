@@ -55,6 +55,15 @@ class SentMessage(Base):
 
     sender = relationship("User", back_populates="sent_messages")
 
+class Config(Base):
+    __tablename__ = "config"
+    id = Column(Integer, primary_key=True)
+    bot_token = Column(String, nullable=False)
+    admin_id = Column(String, nullable=False)
+    web_user = Column(String, nullable=False)
+    web_pass = Column(String, nullable=False)
+    secret_key = Column(String, nullable=False)
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)

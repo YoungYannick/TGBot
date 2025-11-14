@@ -21,7 +21,6 @@ from telegram.helpers import escape_markdown
 
 from database import SessionLocal, User, BlockedKeyword, init_db, SentMessage
 
-CONFIG_FILE = 'config.json'
 DATABASE_FILE = 'bot_data.db'
 
 logging.basicConfig(
@@ -37,23 +36,18 @@ CST_TZ = datetime.timezone(datetime.timedelta(hours=8))
 def now_cst():
     return datetime.datetime.now(CST_TZ)
 
-
-def load_bot_config():
-    if not os.path.exists(CONFIG_FILE):
+def load_db_config():
+    from database import SessionLocal, Config
+    db = SessionLocal()
+    c = db.query(Config).first()
+    db.close()
+    if not c:
         return None
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-            if 'BOT_TOKEN' in config and 'ADMIN_ID' in config:
-                return config
-            else:
-                return None
-    except (IOError, json.JSONDecodeError):
-        return None
+    return {
+        'BOT_TOKEN': c.bot_token,
+        'ADMIN_ID': c.admin_id
+    }
 
-
-BOT_CONFIG = {}
-ADMIN_ID = 0
 
 VERIFICATION_TOKENS = {}
 
@@ -61,7 +55,7 @@ VERIFICATION_TOKENS = {}
 def get_or_create_user(session, user_data: dict):
     user = session.get(User, user_data['id'])
     # 统一使用北京时间
-    now = now_cst()
+    now = now_cst().astimezone(datetime.timezone.utc)
 
     if user:
         user.username = user_data.get('username')
@@ -407,7 +401,7 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
                 user_id=user.id,
                 message_text=(message_content[:500] + '...') if message_content and len(
                     message_content) > 500 else message_content,
-                sent_at=now_cst()
+                sent_at = now_cst().astimezone(datetime.timezone.utc)
             ))
 
             db_session.commit()
@@ -526,9 +520,10 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 await message.reply_text("📃 当前屏蔽关键词列表为空。")
                 return
 
+            total = len(keywords)
             words = "  ".join([f"<code>{escape_html(kw)}</code>" for (kw,) in keywords])
             text = (
-                "📃 <b>当前屏蔽关键词列表：</b>\n\n"
+                 f"📃 <b>当前屏蔽关键词列表（共 {total} 个）：</b>\n\n"
                 f"{words}"
             )
             await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -629,29 +624,21 @@ async def set_admin_commands(app: Application):
 
 
 def main():
-    global BOT_CONFIG, ADMIN_ID
+    global ADMIN_ID
+    from database import init_db
+    init_db()
 
-    while True:
-        BOT_CONFIG = load_bot_config()
-        if BOT_CONFIG:
-            try:
-                ADMIN_ID = int(BOT_CONFIG['ADMIN_ID'])
-                logger.info("Configuration loaded successfully, starting bot...")
-                break
-            except (ValueError, TypeError):
-                logger.error(f"ADMIN_ID format in {CONFIG_FILE} is incorrect. Please check.")
-                time.sleep(10)
-        else:
-            logger.warning(f"Could not find or complete {CONFIG_FILE} configuration, waiting for Web panel setup...")
-            logger.warning(f"Please run 'python app.py' first and complete setup via web.")
-            time.sleep(10)
+    BOT_CONFIG = None
+    while BOT_CONFIG is None:
+        BOT_CONFIG = load_db_config()
+        if BOT_CONFIG is None:
+            logger.warning("数据库未找到配置，等待 Web 面板完成初始化...")
+            time.sleep(5)
 
-    if not os.path.exists(DATABASE_FILE):
-        logger.info("Database not found, initializing...")
-        init_db()
-        logger.info("Database initialization complete.")
+    ADMIN_ID = int(BOT_CONFIG['ADMIN_ID'])
 
     app = Application.builder().token(BOT_CONFIG['BOT_TOKEN']).build()
+
 
     admin_filter = filters.User(user_id=ADMIN_ID)
     app.add_handler(CommandHandler(
