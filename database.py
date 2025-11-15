@@ -16,13 +16,10 @@ class User(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     lang_code = Column(String, nullable=True)
-
     is_verified = Column(Boolean, default=False)
     is_blocked = Column(Boolean, default=False)
-
     created_at = Column(DateTime(timezone=True))
     last_seen = Column(DateTime(timezone=True))
-
     sent_messages = relationship("SentMessage", back_populates="sender")
 
 
@@ -52,7 +49,6 @@ class SentMessage(Base):
     user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)
     message_text = Column(Text, nullable=True)
     sent_at = Column(DateTime(timezone=True))
-
     sender = relationship("User", back_populates="sent_messages")
 
 class Config(Base):
@@ -63,20 +59,19 @@ class Config(Base):
     web_user = Column(String, nullable=False)
     web_pass = Column(String, nullable=False)
     secret_key = Column(String, nullable=False)
-
     verification_enabled = Column(Boolean, default=True)
     verification_type = Column(String, default='simple')
     verification_difficulty = Column(String, default='easy')
+    update_method = Column(String, default='polling')
+    webhook_domain = Column(String, nullable=True)
+    webhook_secret = Column(String, nullable=True)
 
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-
     from sqlalchemy.orm import Session
     db = Session(bind=engine)
-
     from database import StartMessage
-
     if db.query(StartMessage).count() == 0:
         zh_text = """🤖 欢迎使用 Yannick Young 传话筒
 
@@ -94,11 +89,9 @@ def init_db():
 - Repeated misuse may get you blocked
 
 Thank you for your understanding and cooperation. Happy chatting! 🙌"""
-
         db.add(StartMessage(lang="zh", content=zh_text))
         db.add(StartMessage(lang="en", content=en_text))
         db.commit()
-
     db.close()
 
 

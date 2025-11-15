@@ -111,9 +111,41 @@
             <div id="bot-settings-page" class="page">
                 <div class="content-card">
                     <div class="card-header">
-                        <h2>机器人设置</h2>
+                        <h2>核心设置</h2>
                     </div>
-                    <div class="card-body" id="bot-settings-form">
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label for="core_bot_token">Bot Token</label>
+                            <input type="password" id="core_bot_token">
+                            <small>机器人令牌，修改后将重启 Bot 服务。</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="core_admin_id">管理员 UID</label>
+                            <input type="text" id="core_admin_id" pattern="\d+">
+                            <small>管理员的 Telegram 数字 ID，修改后将重启 Bot 服务。</small>
+                        </div>
+                        <hr>
+                        <div class="form-group">
+                            <label for="core_web_user">Web 面板登录用户名</label>
+                            <input type="text" id="core_web_user">
+                        </div>
+                        <div class="form-group">
+                            <label for="core_web_pass">Web 面板新密码</label>
+                            <input type="password" id="core_web_pass" placeholder="留空则不修改">
+                        </div>
+                        <div class="form-group">
+                            <label for="core_web_pass_confirm">确认新密码</label>
+                            <input type="password" id="core_web_pass_confirm" placeholder="再次输入新密码">
+                        </div>
+                        <button id="save-core-settings-btn" class="btn">保存核心设置</button>
+                    </div>
+                </div>
+
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>机器人功能设置</h2>
+                    </div>
+                    <div class="card-body">
                         <div class="form-group-row">
                             <label for="verification_enabled">启用人机验证</label>
                             <label class="switch">
@@ -139,9 +171,37 @@
                             </select>
                             <small>(数学: 1/2/3/4位数 | 图形: 4/6/8/10位)</small>
                         </div>
-                        <button id="save-settings-btn" class="btn">保存设置</button>
                     </div>
                 </div>
+
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>机器人连接设置</h2>
+                    </div>
+                    <div class="card-body">
+                         <div class="form-group">
+                            <label for="update_method_dashboard">连接方式</label>
+                            <select id="update_method_dashboard">
+                                <option value="polling">轮询 (Polling)</option>
+                                <option value="webhook">Webhook</option>
+                            </select>
+                            <small>更改此设置将导致机器人重启。</small>
+                        </div>
+                        <div id="webhook-settings-dashboard" style="display: none;">
+                            <div class="form-group">
+                                <label for="webhook_domain">Webhook 域名</label>
+                                <input type="text" id="webhook_domain_dashboard" placeholder="例如: example.com">
+                                <small>需要SSL证书，端口将使用 8443</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="webhook_secret">Webhook 密钥</label>
+                                <input type="text" id="webhook_secret_dashboard" placeholder="一个随机字符串 (推荐)">
+                                <small>仅允许使用 A-Z, a-z, 0-9, _ 和 -</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button id="save-settings-btn" class="btn">保存功能与连接设置</button>
             </div>
 
             <div id="start-message-page" class="page">
@@ -263,5 +323,3 @@
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>
-<script setup lang="ts">
-</script>

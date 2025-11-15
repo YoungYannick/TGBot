@@ -156,6 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pageId === 'dashboard') loadStats();
         if (pageId === 'users') updateUsersAndLoad();
         if (pageId === 'keywords') updateKwAndLoad();
+        if (pageId === 'bot-settings') loadBotSettings();
     }
 
     navLinks.forEach(link => {
@@ -167,7 +168,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function apiFetch(url, options = {}) {
         const response = await fetch(url, options);
-        if (!response.ok) throw new Error('API error');
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({'error': 'API error'}));
+            throw new Error(errorData.error || 'API error');
+        }
         return response.json();
     }
 
@@ -194,7 +198,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('new-users-today').textContent = today.new_users_today;
             document.getElementById('dialog-users-today').textContent = today.dialog_users_today;
             document.getElementById('messages-today').textContent = today.messages_today;
-            loadBotSettings();
             loadStartMessages();
 
             const rangeSelect = document.getElementById('range-select');
@@ -207,9 +210,19 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadBotSettings() {
         try {
             const settings = await apiFetch('/api/settings');
+
+            document.getElementById('core_bot_token').value = settings.bot_token;
+            document.getElementById('core_admin_id').value = settings.admin_id;
+            document.getElementById('core_web_user').value = settings.web_user;
+
             document.getElementById('verification_enabled').checked = settings.verification_enabled;
             document.getElementById('verification_type').value = settings.verification_type;
             document.getElementById('verification_difficulty').value = settings.verification_difficulty;
+
+            document.getElementById('update_method_dashboard').value = settings.update_method;
+            document.getElementById('webhook_domain_dashboard').value = settings.webhook_domain || '';
+            document.getElementById('webhook_secret_dashboard').value = settings.webhook_secret || '';
+            toggleWebhookDashboardFields();
         } catch (error) {
             showToast('加载机器人设置失败', 'error');
         }
@@ -220,6 +233,9 @@ document.addEventListener('DOMContentLoaded', () => {
             verification_enabled: document.getElementById('verification_enabled').checked,
             verification_type: document.getElementById('verification_type').value,
             verification_difficulty: document.getElementById('verification_difficulty').value,
+            update_method: document.getElementById('update_method_dashboard').value,
+            webhook_domain: document.getElementById('webhook_domain_dashboard').value,
+            webhook_secret: document.getElementById('webhook_secret_dashboard').value,
         };
         try {
             const response = await apiFetch('/api/settings', {
@@ -229,9 +245,47 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             showToast(response.message || '设置已保存');
         } catch (error) {
-            showToast('保存设置失败', 'error');
+            showToast(`保存设置失败: ${error.message}`, 'error');
         }
     }
+
+    async function saveCoreSettings() {
+        const newPassword = document.getElementById('core_web_pass').value;
+        const confirmPassword = document.getElementById('core_web_pass_confirm').value;
+
+        if (newPassword !== confirmPassword) {
+            showToast('两次输入的新密码不匹配！', 'error');
+            return;
+        }
+
+        const settings = {
+            bot_token: document.getElementById('core_bot_token').value,
+            admin_id: document.getElementById('core_admin_id').value,
+            web_user: document.getElementById('core_web_user').value,
+            web_pass: newPassword,
+        };
+
+        try {
+            const response = await apiFetch('/api/core-settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            showToast(response.message || '核心设置已保存');
+            document.getElementById('core_web_pass').value = '';
+            document.getElementById('core_web_pass_confirm').value = '';
+        } catch (error) {
+            showToast(`保存核心设置失败: ${error.message}`, 'error');
+        }
+    }
+
+    function toggleWebhookDashboardFields() {
+        const method = document.getElementById('update_method_dashboard').value;
+        const container = document.getElementById('webhook-settings-dashboard');
+        container.style.display = (method === 'webhook') ? 'block' : 'none';
+    }
+    document.getElementById('update_method_dashboard').addEventListener('change', toggleWebhookDashboardFields);
+
 
     async function loadStartMessages() {
         try {
@@ -263,6 +317,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsBtn = document.getElementById('save-settings-btn');
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', saveBotSettings);
+    }
+    const saveCoreSettingsBtn = document.getElementById('save-core-settings-btn');
+    if (saveCoreSettingsBtn) {
+        saveCoreSettingsBtn.addEventListener('click', saveCoreSettings);
     }
     const saveStartMsgBtn = document.getElementById('save-start-message-btn');
     if (saveStartMsgBtn) {
@@ -557,14 +615,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             try {
                 const date = new Date(isoString);
-                const oldFormatted = date.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }); // 'sv-SE' 格式为 "YYYY-MM-DD HH:MM:SS"
+                const oldFormatted = date.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
                 return oldFormatted.replace(/-/g, '/');
             } catch (e2) {
                  return isoString;
             }
         }
     }
-
 
     function debounce(func, delay) {
         let timeout;

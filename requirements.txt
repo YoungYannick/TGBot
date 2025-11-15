@@ -1,4 +1,5 @@
 python-telegram-bot[asyncio]
+python-telegram-bot[webhooks]
 flask
 sqlalchemy
 waitress
