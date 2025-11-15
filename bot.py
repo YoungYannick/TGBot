@@ -6,6 +6,7 @@ import json
 import os
 import time
 import io
+from fractions import Fraction
 from zoneinfo import ZoneInfo
 from html import escape as escape_html
 from captcha.image import ImageCaptcha
@@ -174,83 +175,122 @@ async def send_simple_verification(chat_id: int, lang: str, context: ContextType
 
 async def send_math_verification(chat_id: int, lang: str, difficulty: str, context: ContextTypes.DEFAULT_TYPE):
     question = ""
-    answer = 0
+    answer = None
 
     if difficulty == 'hell':
-        ops = ['+', '-', '*']
-        def build_expr():
-            num_terms = random.choice([3, 4])
-            terms = []
-            for _ in range(num_terms):
-                terms.append(str(random.randint(10, 999)))
-            symbols = [random.choice(ops) for _ in range(num_terms - 1)]
-            expr = terms[0]
-            for i, sym in enumerate(symbols):
-                next_term = terms[i + 1]
-                expr = f"({expr} {sym} {next_term})" if random.random() < 0.5 else f"{expr} {sym} {next_term}"
-            return expr
+        for _ in range(200):
+            nums = [random.randint(1000, 9999) for _ in range(random.randint(5, 7))]
+            ops = ['+', '-', '*', '/']
+            random.shuffle(ops)
 
-        max_tries = 200
-        for _ in range(max_tries):
-            expr = build_expr()
+            all_ops = ops.copy()
+            while len(all_ops) < len(nums) - 1:
+                all_ops.append(random.choice(ops))
+            random.shuffle(all_ops)
+
+            templates = [
+                f"(({nums[0]} {all_ops[0]} {nums[1]}) {all_ops[1]} ({nums[2]} {all_ops[2]} {nums[3]})) {all_ops[3]} {nums[4]}",
+                f"({nums[0]} {all_ops[0]} ({nums[1]} {all_ops[1]} {nums[2]})) {all_ops[2]} ({nums[3]} {all_ops[3]} {nums[4]})",
+                f"(({nums[0]} {all_ops[0]} {nums[1]}) {all_ops[1]} {nums[2]}) {all_ops[2]} ({nums[3]} {all_ops[3]} {nums[4]})"
+            ]
+
+            if len(nums) >= 6:
+                templates.extend([
+                    f"((({nums[0]} {all_ops[0]} {nums[1]}) {all_ops[1]} {nums[2]}) {all_ops[2]} ({nums[3]} {all_ops[3]} {nums[4]})) {all_ops[4]} {nums[5]}",
+                    f"({nums[0]} {all_ops[0]} (({nums[1]} {all_ops[1]} {nums[2]}) {all_ops[2]} {nums[3]})) {all_ops[3]} ({nums[4]} {all_ops[4]} {nums[5]})"
+                ])
+
+            expr = random.choice(templates)
+
             try:
                 val = eval(expr)
-            except Exception:
+                if isinstance(val, (int, float)) and abs(val) < 100000 and val != 0:
+                    if isinstance(val, float):
+                        if val.is_integer():
+                            answer = int(val)
+                        else:
+                            answer = round(val, 2)
+                    else:
+                        answer = val
+                    question = expr + " = ?"
+                    break
+            except:
                 continue
-            if isinstance(val, (int,)) and 1000 <= val <= 9999:
-                question = expr + " = ?"
-                answer = int(val)
-                break
-        if not question:
-            a = random.randint(100, 999)
-            b = random.randint(2, 9)
-            c = random.randint(2, 9)
-            question = f"({a} + {b}) * {c} = ?"
-            answer = (a + b) * c
+
+        if not answer:
+            question = f"((6000 + 2000) / 4000) * 3000 - 1000 = ?"
+            answer = 5000
+
     elif difficulty == 'hard':
-        if random.choice([True, False]):
-            a = random.randint(10, 99)
-            b = random.randint(2, 9)
-            question = f"{a} * {b} = ?"
-            answer = a * b
-        else:
-            a = random.randint(100, 999)
-            b = random.randint(100, 999)
-            question = f"{a} + {b} = ?"
-            answer = a + b
+        for _ in range(100):
+            nums = [random.randint(100, 999) for _ in range(4)]
+            ops = ['+', '-', '*', '/']
+            random.shuffle(ops)
+
+            templates = [
+                f"({nums[0]} {ops[0]} {nums[1]}) {ops[1]} ({nums[2]} {ops[2]} {nums[3]})",
+                f"(({nums[0]} {ops[0]} {nums[1]}) {ops[1]} {nums[2]}) {ops[2]} {nums[3]}",
+                f"{nums[0]} {ops[0]} (({nums[1]} {ops[1]} {nums[2]}) {ops[2]} {nums[3]})"
+            ]
+
+            expr = random.choice(templates)
+
+            try:
+                val = eval(expr)
+                if isinstance(val, (int, float)) and abs(val) < 10000 and val != 0:
+                    if isinstance(val, float):
+                        if val.is_integer():
+                            answer = int(val)
+                        else:
+                            answer = round(val, 2)
+                    else:
+                        answer = val
+                    question = expr + " = ?"
+                    break
+            except:
+                continue
+
+        if not answer:
+            question = f"(500 + 200) * 300 / 100 - 50 = ?"
+            answer = 2050
+
     elif difficulty == 'medium':
-        if random.choice([True, False]):
-            a = random.randint(10, 99)
-            b = random.randint(10, 99)
-            question = f"{a} + {b} = ?"
-            answer = a + b
-        else:
-            a = random.randint(50, 99)
-            b = random.randint(10, 49)
-            question = f"{a} - {b} = ?"
-            answer = a - b
+        a = random.randint(10, 99)
+        b = random.randint(10, 99)
+        op = random.choice(['+', '-'])
+        question = f"{a} {op} {b} = ?"
+        answer = a + b if op == '+' else a - b
+
     else:
         a = random.randint(1, 9)
         b = random.randint(1, 9)
-        question = f"{a} + {b} = ?"
-        answer = a + b
+        op = random.choice(['+', '-'])
+        question = f"{a} {op} {b} = ?"
+        answer = a + b if op == '+' else a - b
 
-    options = {answer}
+    answer_str = str(answer)
+    options = {answer_str}
+
     while len(options) < 4:
-        if abs(answer) >= 1000:
-            delta = max(50, int(abs(answer) * 0.05))
-            wrong_ans = answer + random.randint(-5*delta, 5*delta)
-        elif abs(answer) >= 100:
-            wrong_ans = answer + random.randint(-100, 100)
+        if isinstance(answer, float):
+            delta = max(0.5, abs(answer) * 0.1)
+            wrong_ans = round(answer + random.uniform(-delta, delta), 2)
+            if wrong_ans != answer:
+                options.add(str(wrong_ans))
         else:
-            wrong_ans = answer + random.randint(-20, 20)
-        if wrong_ans != answer and wrong_ans >= 0:
-            options.add(wrong_ans)
+            if abs(answer) >= 1000:
+                wrong_ans = answer + random.randint(-500, 500)
+            elif abs(answer) >= 100:
+                wrong_ans = answer + random.randint(-100, 100)
+            else:
+                wrong_ans = answer + random.randint(-10, 10)
+            if wrong_ans != answer:
+                options.add(str(wrong_ans))
 
-    options_list = sorted(list(options))
+    options_list = sorted(list(options), key=lambda x: float(x))
 
     expiry = now_sh() + datetime.timedelta(minutes=5)
-    VERIFICATION_DATA[chat_id] = {'type': 'math', 'answer': str(answer), 'expiry': expiry}
+    VERIFICATION_DATA[chat_id] = {'type': 'math', 'answer': answer_str, 'expiry': expiry}
 
     if lang.startswith('zh'):
         text = f"🛡 请计算下面的数学题以完成验证：\n\n{question}"
@@ -258,10 +298,9 @@ async def send_math_verification(chat_id: int, lang: str, difficulty: str, conte
         text = f"🛡 Please solve the math problem to verify:\n\n{question}"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(str(opt), callback_data=f"math_{opt}") for opt in options_list]
+        [InlineKeyboardButton(opt, callback_data=f"math_{opt}") for opt in options_list]
     ])
     await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
-
 
 async def send_image_verification(chat_id: int, lang: str, difficulty: str, context: ContextTypes.DEFAULT_TYPE):
     if difficulty == 'hell':
