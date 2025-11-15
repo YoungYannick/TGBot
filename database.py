@@ -21,7 +21,7 @@ class User(Base):
     is_blocked = Column(Boolean, default=False)
 
     created_at = Column(DateTime(timezone=True))
-    last_seen = Column(DateTime(timezone=True), onupdate=func.now())
+    last_seen = Column(DateTime(timezone=True))
 
     sent_messages = relationship("SentMessage", back_populates="sender")
 

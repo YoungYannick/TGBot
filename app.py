@@ -14,6 +14,7 @@ from flask import (
 from sqlalchemy import desc, or_
 from sqlalchemy.exc import IntegrityError
 from waitress import serve
+from werkzeug.security import generate_password_hash, check_password_hash
 from database import SessionLocal, User, BlockedKeyword, SentMessage, init_db
 
 from database import init_db
@@ -86,35 +87,38 @@ def setup():
     if is_configured():
         return redirect(url_for('login'))
     if request.method == 'POST':
-        config = {}
-        config['BOT_TOKEN'] = request.form.get('bot_token')
-        config['ADMIN_ID'] = request.form.get('admin_id')
-        config['WEB_PANEL_USER'] = request.form.get('web_user')
-        config['WEB_PANEL_PASS'] = request.form.get('web_pass')
-        if not all([config['BOT_TOKEN'], config['ADMIN_ID'], config['WEB_PANEL_USER'], config['WEB_PANEL_PASS']]):
+        bot_token = request.form.get('bot_token')
+        admin_id = request.form.get('admin_id')
+        web_user = request.form.get('web_user')
+        web_pass_plain = request.form.get('web_pass')
+
+        if not all([bot_token, admin_id, web_user, web_pass_plain]):
             flash('所有字段均为必填项。', 'error')
             return render_template('setup.html')
         try:
-            int(config['ADMIN_ID'])
+            int(admin_id)
         except ValueError:
             flash('管理员 UID 必须是纯数字。', 'error')
             return render_template('setup.html')
-        config['SECRET_KEY'] = os.urandom(24).hex()
+
+        web_pass_hash = generate_password_hash(web_pass_plain)
+        secret_key = os.urandom(24).hex()
+
         try:
             from database import SessionLocal, Config
             init_db()
             db = SessionLocal()
             cfg = Config(
-                bot_token=config['BOT_TOKEN'],
-                admin_id=config['ADMIN_ID'],
-                web_user=config['WEB_PANEL_USER'],
-                web_pass=config['WEB_PANEL_PASS'],
-                secret_key=config['SECRET_KEY']
+                bot_token=bot_token,
+                admin_id=admin_id,
+                web_user=web_user,
+                web_pass=web_pass_hash,
+                secret_key=secret_key
             )
             db.add(cfg)
             db.commit()
             db.close()
-            app.secret_key = config['SECRET_KEY']
+            app.secret_key = secret_key
             start_bot()
             flash('配置成功！请登录。', 'success')
             return redirect(url_for('login'))
@@ -129,9 +133,14 @@ def login():
     config = get_config()
     if request.method == 'POST':
         username = request.form['username']
-        password = request.form['password']
-        if (username == config.get('WEB_PANEL_USER') and
-                password == config.get('WEB_PANEL_PASS')):
+        password_plain = request.form['password']
+
+        stored_user = config.get('WEB_PANEL_USER')
+        stored_hash = config.get('WEB_PANEL_PASS')
+
+        if (username == stored_user and
+                stored_hash and
+                check_password_hash(stored_hash, password_plain)):
             session['logged_in'] = True
             app.secret_key = config.get('SECRET_KEY')
             return redirect(url_for('dashboard'))
@@ -175,7 +184,8 @@ def api_today_stats():
     new_users = g.db.query(User).filter(User.created_at >= start_utc, User.created_at < end_utc).count()
     messages_q = g.db.query(SentMessage).filter(SentMessage.sent_at >= start_utc, SentMessage.sent_at < end_utc)
     messages_count = messages_q.count()
-    dialog_users_count = g.db.query(SentMessage.user_id).filter(SentMessage.sent_at >= start_utc, SentMessage.sent_at < end_utc).distinct().count()
+    dialog_users_count = g.db.query(SentMessage.user_id).filter(SentMessage.sent_at >= start_utc,
+                                                                SentMessage.sent_at < end_utc).distinct().count()
     return jsonify({
         'date': start_sh.date().isoformat(),
         'new_users_today': new_users,
@@ -255,10 +265,10 @@ def api_get_keywords():
         search_term = f"%{query_str}%"
         query = query.filter(BlockedKeyword.keyword.like(search_term))
     total = query.count()
-    keywords = query.order_by(desc(BlockedKeyword.added_at))\
-                    .offset((page - 1) * per_page)\
-                    .limit(per_page)\
-                    .all()
+    keywords = query.order_by(desc(BlockedKeyword.added_at)) \
+        .offset((page - 1) * per_page) \
+        .limit(per_page) \
+        .all()
     return jsonify({
         'total': total,
         'page': page,
@@ -434,8 +444,8 @@ def api_user_messages():
             pass
     total = q.count()
     msgs = q.order_by(desc(SentMessage.sent_at)) \
-            .offset((page - 1) * per_page) \
-            .limit(per_page).all()
+        .offset((page - 1) * per_page) \
+        .limit(per_page).all()
     return jsonify({
         'total': total,
         'page': page,

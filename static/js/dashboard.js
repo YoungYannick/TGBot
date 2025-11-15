@@ -425,15 +425,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isoString) return 'N/A';
         try {
             const date = new Date(isoString);
-            const pad = (num, length = 2) => String(num).padStart(length, '0');
-            const year = date.getFullYear();
-            const month = pad(date.getMonth() + 1);
-            const day = pad(date.getDate());
-            const hours = pad(date.getHours());
-            const minutes = pad(date.getMinutes());
-            const seconds = pad(date.getSeconds());
-            const milliseconds = pad(date.getMilliseconds(), 3);
-            return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+            const options = {
+                timeZone: 'Asia/Shanghai',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                fractionalSecondDigits: 3,
+                hour12: false
+            };
+
+            let formatted = date.toLocaleString('en-CA', options);
+
+            formatted = formatted.replace(/-/g, '/');
+            formatted = formatted.replace(',', '');
+            return formatted;
         } catch (e) {
             return isoString;
         }

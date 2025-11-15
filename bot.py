@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import time
+from zoneinfo import ZoneInfo
 from html import escape as escape_html
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, Message
@@ -30,11 +31,11 @@ logger = logging.getLogger(__name__)
 
 perPage = 5
 
-CST_TZ = datetime.timezone(datetime.timedelta(hours=8))
+SH_TZ = ZoneInfo('Asia/Shanghai')
 
 
-def now_cst():
-    return datetime.datetime.now(CST_TZ)
+def now_sh():
+    return datetime.datetime.now(SH_TZ)
 
 def load_db_config():
     from database import SessionLocal, Config
@@ -54,8 +55,7 @@ VERIFICATION_TOKENS = {}
 
 def get_or_create_user(session, user_data: dict):
     user = session.get(User, user_data['id'])
-    # 统一使用北京时间
-    now = now_cst().astimezone(datetime.timezone.utc)
+    now = now_sh().astimezone(datetime.timezone.utc)
 
     if user:
         user.username = user_data.get('username')
@@ -126,7 +126,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_verification(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    expiry = now_cst() + datetime.timedelta(minutes=10)
+    expiry = now_sh() + datetime.timedelta(minutes=10)
     VERIFICATION_TOKENS[chat_id] = (token, expiry)
 
     if lang.startswith('zh'):
@@ -154,7 +154,7 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
 
     if (stored_token_data and
             stored_token_data[0] == token and
-            stored_token_data[1] > now_cst()):
+            stored_token_data[1] > now_sh()):
 
         db_session = SessionLocal()
         try:
@@ -401,7 +401,7 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
                 user_id=user.id,
                 message_text=(message_content[:500] + '...') if message_content and len(
                     message_content) > 500 else message_content,
-                sent_at = now_cst().astimezone(datetime.timezone.utc)
+                sent_at = now_sh().astimezone(datetime.timezone.utc)
             ))
 
             db_session.commit()
@@ -491,7 +491,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if exists:
                 await message.reply_text(f"关键词 <code>{escape_html(kw)}</code> 已存在。", parse_mode=ParseMode.HTML)
             else:
-                new_kw = BlockedKeyword(keyword=kw, added_at=now_cst())
+                new_kw = BlockedKeyword(keyword=kw, added_at=now_sh())
                 db_session.add(new_kw)
                 db_session.commit()
                 await message.reply_text(f"✅ 已添加屏蔽关键词：<code>{escape_html(kw)}</code>",
