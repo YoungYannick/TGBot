@@ -177,11 +177,36 @@ async def send_math_verification(chat_id: int, lang: str, difficulty: str, conte
     answer = 0
 
     if difficulty == 'hell':
-        a = random.randint(1, 9)
-        b = random.randint(1, 9)
-        c = random.randint(2, 9)
-        question = f"({a} + {b}) * {c} = ?"
-        answer = (a + b) * c
+        ops = ['+', '-', '*']
+        def build_expr():
+            num_terms = random.choice([3, 4])
+            terms = []
+            for _ in range(num_terms):
+                terms.append(str(random.randint(10, 999)))
+            symbols = [random.choice(ops) for _ in range(num_terms - 1)]
+            expr = terms[0]
+            for i, sym in enumerate(symbols):
+                next_term = terms[i + 1]
+                expr = f"({expr} {sym} {next_term})" if random.random() < 0.5 else f"{expr} {sym} {next_term}"
+            return expr
+
+        max_tries = 200
+        for _ in range(max_tries):
+            expr = build_expr()
+            try:
+                val = eval(expr)
+            except Exception:
+                continue
+            if isinstance(val, (int,)) and 1000 <= val <= 9999:
+                question = expr + " = ?"
+                answer = int(val)
+                break
+        if not question:
+            a = random.randint(100, 999)
+            b = random.randint(2, 9)
+            c = random.randint(2, 9)
+            question = f"({a} + {b}) * {c} = ?"
+            answer = (a + b) * c
     elif difficulty == 'hard':
         if random.choice([True, False]):
             a = random.randint(10, 99)
@@ -212,10 +237,14 @@ async def send_math_verification(chat_id: int, lang: str, difficulty: str, conte
 
     options = {answer}
     while len(options) < 4:
-        range_min = max(1, answer - 20)
-        range_max = answer + 20
-        wrong_ans = random.randint(range_min, range_max)
-        if wrong_ans != answer:
+        if abs(answer) >= 1000:
+            delta = max(50, int(abs(answer) * 0.05))
+            wrong_ans = answer + random.randint(-5*delta, 5*delta)
+        elif abs(answer) >= 100:
+            wrong_ans = answer + random.randint(-100, 100)
+        else:
+            wrong_ans = answer + random.randint(-20, 20)
+        if wrong_ans != answer and wrong_ans >= 0:
             options.add(wrong_ans)
 
     options_list = sorted(list(options))
