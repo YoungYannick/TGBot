@@ -15,7 +15,7 @@ from sqlalchemy import desc, or_
 from sqlalchemy.exc import IntegrityError
 from waitress import serve
 from werkzeug.security import generate_password_hash, check_password_hash
-from database import SessionLocal, User, BlockedKeyword, SentMessage, init_db
+from database import SessionLocal, User, BlockedKeyword, SentMessage, init_db, Config, StartMessage
 
 from database import init_db
 init_db()
@@ -113,7 +113,10 @@ def setup():
                 admin_id=admin_id,
                 web_user=web_user,
                 web_pass=web_pass_hash,
-                secret_key=secret_key
+                secret_key=secret_key,
+                verification_enabled=True,
+                verification_type='simple',
+                verification_difficulty='easy'
             )
             db.add(cfg)
             db.commit()
@@ -158,6 +161,73 @@ def logout():
 def dashboard():
     config = get_config()
     return render_template('dashboard.html', admin_user=config.get('WEB_PANEL_USER', 'Admin'))
+
+@app.route('/api/settings', methods=['GET'])
+@login_required
+def api_get_settings():
+    config = g.db.query(Config).first()
+    if not config:
+        return jsonify({'error': 'Config not found'}), 404
+    return jsonify({
+        'verification_enabled': config.verification_enabled,
+        'verification_type': config.verification_type,
+        'verification_difficulty': config.verification_difficulty,
+    })
+
+@app.route('/api/settings', methods=['POST'])
+@login_required
+def api_save_settings():
+    config = g.db.query(Config).first()
+    if not config:
+        return jsonify({'error': 'Config not found'}), 404
+    data = request.get_json()
+
+    config.verification_enabled = bool(data.get('verification_enabled'))
+
+    v_type = data.get('verification_type', 'simple')
+    if v_type not in ['simple', 'math', 'image']:
+        v_type = 'simple'
+    config.verification_type = v_type
+
+    v_diff = data.get('verification_difficulty', 'easy')
+    if v_diff not in ['easy', 'medium', 'hard', 'hell']:
+        v_diff = 'easy'
+    config.verification_difficulty = v_diff
+
+    g.db.commit()
+    return jsonify({'success': True, 'message': '设置已保存！'})
+
+@app.route('/api/start_messages', methods=['GET'])
+@login_required
+def api_get_start_messages():
+    msg_zh = g.db.query(StartMessage).filter_by(lang='zh').first()
+    msg_en = g.db.query(StartMessage).filter_by(lang='en').first()
+    return jsonify({
+        'zh': msg_zh.content if msg_zh else '',
+        'en': msg_en.content if msg_en else ''
+    })
+
+@app.route('/api/start_messages', methods=['POST'])
+@login_required
+def api_save_start_messages():
+    data = request.get_json()
+    msg_zh_content = data.get('zh', '')
+    msg_en_content = data.get('en', '')
+
+    msg_zh = g.db.query(StartMessage).filter_by(lang='zh').first()
+    if msg_zh:
+        msg_zh.content = msg_zh_content
+    else:
+        g.db.add(StartMessage(lang='zh', content=msg_zh_content))
+
+    msg_en = g.db.query(StartMessage).filter_by(lang='en').first()
+    if msg_en:
+        msg_en.content = msg_en_content
+    else:
+        g.db.add(StartMessage(lang='en', content=msg_en_content))
+
+    g.db.commit()
+    return jsonify({'success': True, 'message': '欢迎消息已保存！'})
 
 @app.route('/api/stats')
 @login_required

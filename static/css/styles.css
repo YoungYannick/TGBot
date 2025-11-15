@@ -421,8 +421,9 @@ input[type="text"], input[type="date"], textarea, select {
 }
 
 textarea {
-    resize: vertical;
-    min-height: 100px;
+    width: 100%;
+    min-width: 100%;
+    box-sizing: border-box;
 }
 
 input[type="text"]:focus, textarea:focus, select:focus {
@@ -857,4 +858,78 @@ hr {
     width: 100% !important;
     max-width: 100% !important;
     min-height: 15vh;
+}
+
+.form-group-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.form-group-row label {
+    margin-bottom: 0;
+    font-weight: 500;
+}
+
+.form-group small {
+    display: block;
+    font-size: 0.875rem;
+    color: var(--text-secondary-color);
+    margin-top: 0.5rem;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: var(--success-color);
+}
+
+input:focus + .slider {
+    box-shadow: 0 0 1px var(--success-color);
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
+
+.slider.round {
+    border-radius: 34px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
 }

@@ -5,8 +5,10 @@ import datetime
 import json
 import os
 import time
+import io
 from zoneinfo import ZoneInfo
 from html import escape as escape_html
+from captcha.image import ImageCaptcha
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, Message
 from telegram.ext import (
@@ -20,7 +22,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode, ChatType
 from telegram.helpers import escape_markdown
 
-from database import SessionLocal, User, BlockedKeyword, init_db, SentMessage
+from database import SessionLocal, User, BlockedKeyword, init_db, SentMessage, StartMessage, Config
 
 DATABASE_FILE = 'bot_data.db'
 
@@ -46,11 +48,13 @@ def load_db_config():
         return None
     return {
         'BOT_TOKEN': c.bot_token,
-        'ADMIN_ID': c.admin_id
+        'ADMIN_ID': c.admin_id,
+        'VERIFICATION_ENABLED': c.verification_enabled,
+        'VERIFICATION_TYPE': c.verification_type,
+        'VERIFICATION_DIFFICULTY': c.verification_difficulty
     }
 
-
-VERIFICATION_TOKENS = {}
+VERIFICATION_DATA = {}
 
 
 def get_or_create_user(session, user_data: dict):
@@ -101,10 +105,9 @@ def check_keyword(session, text: str):
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     lang = user.language_code or 'en'
-
     db_session = SessionLocal()
     try:
-        get_or_create_user(db_session, user.to_dict())
+        db_user = get_or_create_user(db_session, user.to_dict())
     finally:
         db_session.close()
 
@@ -121,19 +124,46 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_session.close()
 
     await update.message.reply_text(text)
-    await check_verification_and_forward(update, context)
+
+    db_session = SessionLocal()
+    try:
+        db_user = get_user_from_db(db_session, user.id)
+        if not db_user.is_verified:
+            await prompt_verification_if_needed(db_session, db_user, user.id, lang, context)
+    finally:
+        db_session.close()
 
 
-async def send_verification(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
+async def prompt_verification_if_needed(db_session, db_user, user_id, lang, context):
+    bot_config = load_db_config()
+
+    if not bot_config.get('VERIFICATION_ENABLED'):
+        db_user.is_verified = True
+        db_session.commit()
+        await context.bot.send_message(user_id, "✅ 管理员已关闭验证，您已自动通过。")
+        return
+
+    v_type = bot_config.get('VERIFICATION_TYPE', 'simple')
+    v_diff = bot_config.get('VERIFICATION_DIFFICULTY', 'easy')
+
+    if v_type == 'math':
+        await send_math_verification(user_id, lang, v_diff, context)
+    elif v_type == 'image':
+        await send_image_verification(user_id, lang, v_diff, context)
+    else:
+        await send_simple_verification(user_id, lang, context)
+
+
+async def send_simple_verification(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     expiry = now_sh() + datetime.timedelta(minutes=10)
-    VERIFICATION_TOKENS[chat_id] = (token, expiry)
+    VERIFICATION_DATA[chat_id] = {'type': 'simple', 'token': token, 'expiry': expiry}
 
     if lang.startswith('zh'):
-        text = "🛡 为了防止骚扰，请先完成一次验证：点击下方按钮。"
+        text = "🛡 为了防止骚扰，请点击下方按钮完成验证："
         btn_text = "✅ 我是人类"
     else:
-        text = "🛡 To prevent spam, please complete a quick verification: tap the button below."
+        text = "🛡 To prevent spam, please tap the button below to verify:"
         btn_text = "✅ I'm human"
 
     keyboard = InlineKeyboardMarkup(
@@ -142,7 +172,95 @@ async def send_verification(chat_id: int, lang: str, context: ContextTypes.DEFAU
     await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
 
 
-async def verification_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_math_verification(chat_id: int, lang: str, difficulty: str, context: ContextTypes.DEFAULT_TYPE):
+    question = ""
+    answer = 0
+
+    if difficulty == 'hell':
+        a = random.randint(1, 9)
+        b = random.randint(1, 9)
+        c = random.randint(2, 9)
+        question = f"({a} + {b}) * {c} = ?"
+        answer = (a + b) * c
+    elif difficulty == 'hard':
+        if random.choice([True, False]):
+            a = random.randint(10, 99)
+            b = random.randint(2, 9)
+            question = f"{a} * {b} = ?"
+            answer = a * b
+        else:
+            a = random.randint(100, 999)
+            b = random.randint(100, 999)
+            question = f"{a} + {b} = ?"
+            answer = a + b
+    elif difficulty == 'medium':
+        if random.choice([True, False]):
+            a = random.randint(10, 99)
+            b = random.randint(10, 99)
+            question = f"{a} + {b} = ?"
+            answer = a + b
+        else:
+            a = random.randint(50, 99)
+            b = random.randint(10, 49)
+            question = f"{a} - {b} = ?"
+            answer = a - b
+    else:
+        a = random.randint(1, 9)
+        b = random.randint(1, 9)
+        question = f"{a} + {b} = ?"
+        answer = a + b
+
+    options = {answer}
+    while len(options) < 4:
+        range_min = max(1, answer - 20)
+        range_max = answer + 20
+        wrong_ans = random.randint(range_min, range_max)
+        if wrong_ans != answer:
+            options.add(wrong_ans)
+
+    options_list = sorted(list(options))
+
+    expiry = now_sh() + datetime.timedelta(minutes=5)
+    VERIFICATION_DATA[chat_id] = {'type': 'math', 'answer': str(answer), 'expiry': expiry}
+
+    if lang.startswith('zh'):
+        text = f"🛡 请计算下面的数学题以完成验证：\n\n{question}"
+    else:
+        text = f"🛡 Please solve the math problem to verify:\n\n{question}"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(str(opt), callback_data=f"math_{opt}") for opt in options_list]
+    ])
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
+
+async def send_image_verification(chat_id: int, lang: str, difficulty: str, context: ContextTypes.DEFAULT_TYPE):
+    if difficulty == 'hell':
+        length = 10
+    elif difficulty == 'hard':
+        length = 8
+    elif difficulty == 'medium':
+        length = 6
+    else:
+        length = 4
+
+    text = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+    image = ImageCaptcha()
+    data = image.generate(text)
+
+    expiry = now_sh() + datetime.timedelta(minutes=5)
+    VERIFICATION_DATA[chat_id] = {'type': 'image', 'answer': text, 'expiry': expiry}
+
+    if lang.startswith('zh'):
+        caption = "🛡 请输入图片中的字符以完成验证（不区分大小写）："
+    else:
+        caption = "🛡 Please type the characters in the image to verify (case-insensitive):"
+
+    await context.bot.send_photo(chat_id=chat_id, photo=data, caption=caption)
+
+
+async def simple_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
@@ -150,11 +268,12 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
     lang = query.from_user.language_code or 'en'
     token = query.data.split("_")[1]
 
-    stored_token_data = VERIFICATION_TOKENS.get(user_id)
+    stored_data = VERIFICATION_DATA.get(user_id)
 
-    if (stored_token_data and
-            stored_token_data[0] == token and
-            stored_token_data[1] > now_sh()):
+    if (stored_data and
+            stored_data['type'] == 'simple' and
+            stored_data['token'] == token and
+            stored_data['expiry'] > now_sh()):
 
         db_session = SessionLocal()
         try:
@@ -162,8 +281,8 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
             user.is_verified = True
             db_session.commit()
 
-            if user_id in VERIFICATION_TOKENS:
-                del VERIFICATION_TOKENS[user_id]
+            if user_id in VERIFICATION_DATA:
+                del VERIFICATION_DATA[user_id]
 
             if lang.startswith('zh'):
                 await query.edit_message_text("✅ 验证通过！现在您可以正常发送消息了。")
@@ -173,14 +292,158 @@ async def verification_callback_handler(update: Update, context: ContextTypes.DE
         finally:
             db_session.close()
     else:
-        if user_id in VERIFICATION_TOKENS:
-            del VERIFICATION_TOKENS[user_id]
+        if user_id in VERIFICATION_DATA:
+            del VERIFICATION_DATA[user_id]
 
         if lang.startswith('zh'):
             await query.edit_message_text("验证失败或已过期，请重新发送消息以获取验证。")
         else:
             await query.edit_message_text(
                 "Verification failed or expired. Please send a message again to get verified.")
+
+
+async def math_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = query.from_user.language_code or 'en'
+    answer = query.data.split("_")[1]
+
+    stored_data = VERIFICATION_DATA.get(user_id)
+
+    if (stored_data and
+            stored_data['type'] == 'math' and
+            stored_data['expiry'] > now_sh()):
+
+        if stored_data['answer'] == answer:
+            db_session = SessionLocal()
+            try:
+                user = get_or_create_user(db_session, query.from_user.to_dict())
+                user.is_verified = True
+                db_session.commit()
+
+                if user_id in VERIFICATION_DATA:
+                    del VERIFICATION_DATA[user_id]
+
+                if lang.startswith('zh'):
+                    await query.edit_message_text("✅ 验证通过！现在您可以正常发送消息了。")
+                else:
+                    await query.edit_message_text("✅ Verified! You can now send messages normally.")
+            finally:
+                db_session.close()
+        else:
+            if lang.startswith('zh'):
+                await query.edit_message_text("❌ 回答错误。请重新发送消息获取新题目。")
+            else:
+                await query.edit_message_text("❌ Wrong answer. Please send a message again to get a new question.")
+            if user_id in VERIFICATION_DATA:
+                del VERIFICATION_DATA[user_id]
+    else:
+        if user_id in VERIFICATION_DATA:
+            del VERIFICATION_DATA[user_id]
+
+        if lang.startswith('zh'):
+            await query.edit_message_text("验证失败或已过期，请重新发送消息以获取验证。")
+        else:
+            await query.edit_message_text(
+                "Verification failed or expired. Please send a message again to get verified.")
+
+
+async def check_verification_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if not message:
+        return
+
+    user = update.effective_user
+    lang = user.language_code or 'en'
+
+    db_session = SessionLocal()
+    try:
+        db_user = get_or_create_user(db_session, user.to_dict())
+
+        if db_user.is_blocked:
+            if lang.startswith('zh'):
+                await message.reply_text("🚫 您已被管理员屏蔽，无法发送消息。")
+            else:
+                await message.reply_text("🚫 You have been blocked by the administrator and cannot send messages.")
+            return
+
+        stored_data = VERIFICATION_DATA.get(user.id)
+        if (stored_data and
+                stored_data['type'] == 'image' and
+                stored_data['expiry'] > now_sh() and
+                message.text):
+
+            if message.text.lower() == stored_data['answer'].lower():
+                db_user.is_verified = True
+                db_session.commit()
+                del VERIFICATION_DATA[user.id]
+                if lang.startswith('zh'):
+                    await message.reply_text("✅ 验证通过！现在您可以正常发送消息了。")
+                else:
+                    await message.reply_text("✅ Verified! You can now send messages normally.")
+            else:
+                if lang.startswith('zh'):
+                    await message.reply_text("❌ 验证码错误。请重试。")
+                else:
+                    await message.reply_text("❌ CAPTCHA incorrect. Please try again.")
+
+                bot_config = load_db_config()
+                await send_image_verification(user.id, lang, bot_config.get('VERIFICATION_DIFFICULTY', 'easy'), context)
+            return
+
+        if not db_user.is_verified:
+            await prompt_verification_if_needed(db_session, db_user, user.id, lang, context)
+            return
+
+        text_to_check = message.text or message.caption
+        hit_keyword = check_keyword(db_session, text_to_check)
+        if hit_keyword:
+            if lang.startswith('zh'):
+                await message.reply_text(
+                    f"⚠️ 您的消息包含被屏蔽的关键词 (<code>{escape_html(str(hit_keyword))}</code>)，未被转发给管理员。",
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await message.reply_text(
+                    f"⚠️ Your message contains blocked keywords (<code>{escape_html(str(hit_keyword))}</code>) and was not forwarded to the admin.",
+                    parse_mode=ParseMode.HTML
+                )
+
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🚫 已拦截来自 {user.mention_html()} (@{user.username} UID: <code>{user.id}</code>) 的消息，命中关键词：<code>{escape_html(str(hit_keyword))}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        try:
+            forwarded_msg = await message.forward(ADMIN_ID)
+
+            from database import MessageMap
+            db_session.add(MessageMap(admin_msg_id=forwarded_msg.message_id, user_id=user.id))
+
+            message_content = message.text or message.caption
+            db_session.add(SentMessage(
+                user_id=user.id,
+                message_text=(message_content[:500] + '...') if message_content and len(
+                    message_content) > 500 else message_content,
+                sent_at=now_sh().astimezone(datetime.timezone.utc)
+            ))
+
+            db_session.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to forward message: {e}")
+            if lang.startswith('zh'):
+                await message.reply_text("抱歉，您的消息未能成功转发给管理员，请稍后再试。")
+            else:
+                await message.reply_text(
+                    "Sorry, your message could not be forwarded to the administrator. Please try again later.")
+
+    finally:
+        db_session.close()
 
 
 async def view_blocked_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -346,78 +609,6 @@ async def user_info_callback_handler(update: Update, context: ContextTypes.DEFAU
         db_session.close()
 
 
-async def check_verification_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message:
-        return
-
-    user = update.effective_user
-    lang = user.language_code or 'en'
-
-    db_session = SessionLocal()
-    try:
-        db_user = get_or_create_user(db_session, user.to_dict())
-
-        if db_user.is_blocked:
-            if lang.startswith('zh'):
-                await message.reply_text("🚫 您已被管理员屏蔽，无法发送消息。")
-            else:
-                await message.reply_text("🚫 You have been blocked by the administrator and cannot send messages.")
-            return
-
-        if not db_user.is_verified:
-            await send_verification(user.id, lang, context)
-            return
-
-        text_to_check = message.text or message.caption
-        hit_keyword = check_keyword(db_session, text_to_check)
-        if hit_keyword:
-            if lang.startswith('zh'):
-                await message.reply_text(
-                    f"⚠️ 您的消息包含被屏蔽的关键词 (<code>{escape_html(str(hit_keyword))}</code>)，未被转发给管理员。",
-                    parse_mode=ParseMode.HTML
-                )
-            else:
-                await message.reply_text(
-                    f"⚠️ Your message contains blocked keywords (<code>{escape_html(str(hit_keyword))}</code>) and was not forwarded to the admin.",
-                    parse_mode=ParseMode.HTML
-                )
-
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🚫 已拦截来自 {user.mention_html()} (@{user.username} UID: <code>{user.id}</code>) 的消息，命中关键词：<code>{escape_html(str(hit_keyword))}</code>",
-                parse_mode=ParseMode.HTML
-            )
-            return
-
-        try:
-            forwarded_msg = await message.forward(ADMIN_ID)
-
-            from database import MessageMap
-            db_session.add(MessageMap(admin_msg_id=forwarded_msg.message_id, user_id=user.id))
-
-            message_content = message.text or message.caption
-            db_session.add(SentMessage(
-                user_id=user.id,
-                message_text=(message_content[:500] + '...') if message_content and len(
-                    message_content) > 500 else message_content,
-                sent_at = now_sh().astimezone(datetime.timezone.utc)
-            ))
-
-            db_session.commit()
-
-        except Exception as e:
-            logger.error(f"Failed to forward message: {e}")
-            if lang.startswith('zh'):
-                await message.reply_text("抱歉，您的消息未能成功转发给管理员，请稍后再试。")
-            else:
-                await message.reply_text(
-                    "Sorry, your message could not be forwarded to the administrator. Please try again later.")
-
-    finally:
-        db_session.close()
-
-
 def format_user_info_card(user: User):
     username = f"@{user.username}" if user.username else "N/A"
     name = (f"{user.first_name or ''} {user.last_name or ''}").strip()
@@ -471,6 +662,89 @@ async def send_blocked_list_page(original_message, users, page, per_page):
     text, reply_markup = get_blocked_list_page_content(users, page, per_page)
     await original_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
+async def get_verify_menu_content(db_session):
+    config = db_session.query(Config).first()
+    if not config:
+        return "❌ 未找到配置。", None
+    status_text = "🟢 开启" if config.verification_enabled else "🔴 关闭"
+    text = (
+        f"<b>🛡 人机验证设置</b>\n\n"
+        f"<b>当前状态:</b> {status_text}\n"
+        f"<b>验证方式:</b> <code>{config.verification_type}</code>\n"
+        f"<b>验证难度:</b> <code>{config.verification_difficulty}</code>"
+    )
+    keyboard = []
+    toggle_btn_text = "切换为: 🔴 关闭" if config.verification_enabled else "切换为: 🟢 开启"
+    keyboard.append([
+        InlineKeyboardButton(toggle_btn_text, callback_data="vs_toggle")
+    ])
+    type_buttons = []
+    types = ['simple', 'math', 'image']
+    for v_type in types:
+        prefix = "🔘" if config.verification_type == v_type else "⭕️"
+        type_buttons.append(
+            InlineKeyboardButton(f"{prefix} {v_type}", callback_data=f"vs_set_type_{v_type}")
+        )
+    keyboard.append(type_buttons)
+    diff_buttons = []
+    diffs = ['easy', 'medium', 'hard', 'hell']
+    for v_diff in diffs:
+        prefix = "🔘" if config.verification_difficulty == v_diff else "⭕️"
+        diff_buttons.append(
+            InlineKeyboardButton(f"{prefix} {v_diff}", callback_data=f"vs_set_diff_{v_diff}")
+        )
+    keyboard.append(diff_buttons)
+    keyboard.append([
+        InlineKeyboardButton("❌ 关闭菜单", callback_data="vs_close")
+    ])
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def verify_settings_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db_session = SessionLocal()
+    try:
+        text, reply_markup = await get_verify_menu_content(db_session)
+        if reply_markup:
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(text)
+    finally:
+        db_session.close()
+
+
+async def verify_settings_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("❌ 您没有权限操作。")
+        return
+    data = query.data
+    db_session = SessionLocal()
+    try:
+        config = db_session.query(Config).first()
+        if not config:
+            await query.edit_message_text("❌ 未找到配置。")
+            return
+        if data == "vs_toggle":
+            config.verification_enabled = not config.verification_enabled
+        elif data.startswith("vs_set_type_"):
+            config.verification_type = data.split("_")[-1]
+        elif data.startswith("vs_set_diff_"):
+            config.verification_difficulty = data.split("_")[-1]
+        elif data == "vs_close":
+            await query.delete_message()
+            return
+        db_session.commit()
+        text, reply_markup = await get_verify_menu_content(db_session)
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Error in verify_settings_callback_handler: {e}")
+        await query.answer("❌ 操作失败。")
+    finally:
+        db_session.close()
 
 async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import MessageMap
@@ -481,6 +755,36 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     db_session = SessionLocal()
     try:
+        if command == '/setstart_zh':
+            if not args:
+                await message.reply_text("用法: /setstart_zh <要设置的中文欢迎语>")
+                return
+
+            msg = db_session.query(StartMessage).filter_by(lang="zh").first()
+            if not msg:
+                msg = StartMessage(lang="zh", content=args)
+                db_session.add(msg)
+            else:
+                msg.content = args
+            db_session.commit()
+            await message.reply_text("✅ 已更新中文 (zh) 欢迎消息。")
+            return
+
+        if command == '/setstart_en':
+            if not args:
+                await message.reply_text("用法: /setstart_en <English welcome message>")
+                return
+
+            msg = db_session.query(StartMessage).filter_by(lang="en").first()
+            if not msg:
+                msg = StartMessage(lang="en", content=args)
+                db_session.add(msg)
+            else:
+                msg.content = args
+            db_session.commit()
+            await message.reply_text("✅ English (en) welcome message updated.")
+            return
+
         if command == '/addkw':
             if not args:
                 await message.reply_text("用法: /addkw <关键词>")
@@ -523,7 +827,7 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             total = len(keywords)
             words = "  ".join([f"<code>{escape_html(kw)}</code>" for (kw,) in keywords])
             text = (
-                 f"📃 <b>当前屏蔽关键词列表（共 {total} 个）：</b>\n\n"
+                f"📃 <b>当前屏蔽关键词列表（共 {total} 个）：</b>\n\n"
                 f"{words}"
             )
             await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -614,6 +918,9 @@ async def set_admin_commands(app: Application):
         ("rmkw", "移除屏蔽词"),
         ("listkw_all", "查看所有屏蔽词"),
         ("listblock_all", "查看所有被封禁用户"),
+        ("setstart_zh", "设置中文欢迎语"),
+        ("setstart_en", "设置英文欢迎语"),
+        ("verify_settings", "人机验证设置"),
     ]
     await app.bot.set_my_commands(commands, scope={"type": "chat", "chat_id": ADMIN_ID})
 
@@ -639,12 +946,23 @@ def main():
 
     app = Application.builder().token(BOT_CONFIG['BOT_TOKEN']).build()
 
-
     admin_filter = filters.User(user_id=ADMIN_ID)
     app.add_handler(CommandHandler(
-        ["block", "unblock", "checkblock", "info", "addkw", "rmkw", "listkw_all", "listblock_all"],
+        ["block", "unblock", "checkblock", "info", "addkw", "rmkw", "listkw_all", "listblock_all", "setstart_zh",
+         "setstart_en"],
         admin_command_handler,
         filters=admin_filter
+    ))
+
+    app.add_handler(CommandHandler(
+        "verify_settings",
+        verify_settings_menu_handler,
+        filters=admin_filter
+    ))
+
+    app.add_handler(CallbackQueryHandler(
+        verify_settings_callback_handler,
+        pattern="^vs_"
     ))
 
     app.add_handler(MessageHandler(
@@ -652,7 +970,8 @@ def main():
         handle_admin_reply
     ))
 
-    app.add_handler(CallbackQueryHandler(verification_callback_handler, pattern="^verify_"))
+    app.add_handler(CallbackQueryHandler(simple_verification_callback, pattern="^verify_"))
+    app.add_handler(CallbackQueryHandler(math_callback_handler, pattern="^math_"))
 
     user_filter = (~admin_filter) & filters.ChatType.PRIVATE
     app.add_handler(CommandHandler("start", start_handler, filters=user_filter))

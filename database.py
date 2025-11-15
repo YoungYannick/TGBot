@@ -64,6 +64,10 @@ class Config(Base):
     web_pass = Column(String, nullable=False)
     secret_key = Column(String, nullable=False)
 
+    verification_enabled = Column(Boolean, default=True)
+    verification_type = Column(String, default='simple')
+    verification_difficulty = Column(String, default='easy')
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)

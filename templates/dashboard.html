@@ -22,6 +22,8 @@
             <button id="sidebar-toggle" class="sidebar-toggle sidebar-toggle-inner">≡</button>
             <ul class="nav-menu">
                 <li class="nav-item"><a href="#" data-page="dashboard" class="active"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg><span>仪表盘</span></a></li>
+                <li class="nav-item"><a href="#" data-page="bot-settings"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06 .06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82 .33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg><span>机器人设置</span></a></li>
+                <li class="nav-item"><a href="#" data-page="start-message"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>欢迎消息</span></a></li>
                 <li class="nav-item"><a href="#" data-page="users"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg><span>用户管理</span></a></li>
                 <li class="nav-item"><a href="#" data-page="keywords"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg><span>屏蔽关键词</span></a></li>
             </ul>
@@ -102,6 +104,61 @@
                     </div>
                     <div class="card-body">
                         <canvas id="messagesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="bot-settings-page" class="page">
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>机器人设置</h2>
+                    </div>
+                    <div class="card-body" id="bot-settings-form">
+                        <div class="form-group-row">
+                            <label for="verification_enabled">启用人机验证</label>
+                            <label class="switch">
+                                <input type="checkbox" id="verification_enabled">
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="verification_type">验证方式</label>
+                            <select id="verification_type">
+                                <option value="simple">简单按钮 (我是人类)</option>
+                                <option value="math">数学计算</option>
+                                <option value="image">图形验证码</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="verification_difficulty">验证难度</label>
+                            <select id="verification_difficulty">
+                                <option value="easy">简单</option>
+                                <option value="medium">中等</option>
+                                <option value="hard">困难</option>
+                                <option value="hell">地狱</option>
+                            </select>
+                            <small>(数学: 1/2/3/4位数 | 图形: 4/6/8/10位)</small>
+                        </div>
+                        <button id="save-settings-btn" class="btn">保存设置</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="start-message-page" class="page">
+                <div class="content-card">
+                    <div class="card-header">
+                        <h2>欢迎消息设置 (/start)</h2>
+                    </div>
+                    <div class="card-body" id="start-message-form">
+                        <div class="form-group">
+                            <label for="start_message_zh">中文 (zh)</label>
+                            <textarea id="start_message_zh" rows="8"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="start_message_en">English (en)</label>
+                            <textarea id="start_message_en" rows="8"></textarea>
+                        </div>
+                        <button id="save-start-message-btn" class="btn">保存欢迎消息</button>
                     </div>
                 </div>
             </div>

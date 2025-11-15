@@ -192,12 +192,81 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('new-users-today').textContent = today.new_users_today;
             document.getElementById('dialog-users-today').textContent = today.dialog_users_today;
             document.getElementById('messages-today').textContent = today.messages_today;
+            loadBotSettings();
+            loadStartMessages();
+
             const rangeSelect = document.getElementById('range-select');
             loadMessageChart(parseInt(rangeSelect.value || 7));
         } catch (error) {
             showToast('加载统计数据失败', 'error');
         }
     }
+
+    async function loadBotSettings() {
+        try {
+            const settings = await apiFetch('/api/settings');
+            document.getElementById('verification_enabled').checked = settings.verification_enabled;
+            document.getElementById('verification_type').value = settings.verification_type;
+            document.getElementById('verification_difficulty').value = settings.verification_difficulty;
+        } catch (error) {
+            showToast('加载机器人设置失败', 'error');
+        }
+    }
+
+    async function saveBotSettings() {
+        const settings = {
+            verification_enabled: document.getElementById('verification_enabled').checked,
+            verification_type: document.getElementById('verification_type').value,
+            verification_difficulty: document.getElementById('verification_difficulty').value,
+        };
+        try {
+            const response = await apiFetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            showToast(response.message || '设置已保存');
+        } catch (error) {
+            showToast('保存设置失败', 'error');
+        }
+    }
+
+    async function loadStartMessages() {
+        try {
+            const messages = await apiFetch('/api/start_messages');
+            document.getElementById('start_message_zh').value = messages.zh;
+            document.getElementById('start_message_en').value = messages.en;
+        } catch (error) {
+            showToast('加载欢迎消息失败', 'error');
+        }
+    }
+
+    async function saveStartMessages() {
+        const messages = {
+            zh: document.getElementById('start_message_zh').value,
+            en: document.getElementById('start_message_en').value,
+        };
+        try {
+            const response = await apiFetch('/api/start_messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(messages)
+            });
+            showToast(response.message || '欢迎消息已保存');
+        } catch (error) {
+            showToast('保存欢迎消息失败', 'error');
+        }
+    }
+
+    const saveSettingsBtn = document.getElementById('save-settings-btn');
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', saveBotSettings);
+    }
+    const saveStartMsgBtn = document.getElementById('save-start-message-btn');
+    if (saveStartMsgBtn) {
+        saveStartMsgBtn.addEventListener('click', saveStartMessages);
+    }
+
 
     const kwTbody = document.getElementById('keyword-list-tbody');
     const kwSearch = document.getElementById('keyword-search');
@@ -425,6 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isoString) return 'N/A';
         try {
             const date = new Date(isoString);
+
             const options = {
                 timeZone: 'Asia/Shanghai',
                 year: 'numeric',
@@ -433,19 +503,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 hour: '2-digit',
                 minute: '2-digit',
                 second: '2-digit',
-                fractionalSecondDigits: 3,
-                hour12: false
+                hour12: false,
+                numberingSystem: 'latn'
             };
 
-            let formatted = date.toLocaleString('en-CA', options);
+            const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(date);
+            const partMap = parts.reduce((acc, part) => {
+                acc[part.type] = part.value;
+                return acc;
+            }, {});
 
-            formatted = formatted.replace(/-/g, '/');
-            formatted = formatted.replace(',', '');
-            return formatted;
+            const ymd = `${partMap.year}/${partMap.month}/${partMap.day}`;
+            const hms = `${partMap.hour}:${partMap.minute}:${partMap.second}`;
+
+            const ms = String(date.getMilliseconds()).padStart(3, '0');
+
+            return `${ymd} ${hms}.${ms}`;
+
         } catch (e) {
-            return isoString;
+            try {
+                const date = new Date(isoString);
+                const oldFormatted = date.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }); // 'sv-SE' 格式为 "YYYY-MM-DD HH:MM:SS"
+                return oldFormatted.replace(/-/g, '/');
+            } catch (e2) {
+                 return isoString;
+            }
         }
     }
+
 
     function debounce(func, delay) {
         let timeout;
