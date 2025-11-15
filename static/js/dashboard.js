@@ -407,7 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderUsers(data) {
         userTbody.innerHTML = '';
         if (data.users.length === 0) {
-            userTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary-color);">未找到用户</td></tr>';
+            userTbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary-color);">未找到用户</td></tr>';
             return;
         }
         data.users.forEach(user => {
@@ -416,9 +416,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusBadge = user.is_blocked
                 ? `<span class="badge badge-blocked">已屏蔽</span>`
                 : `<span class="badge badge-active">正常</span>`;
+            const verifyBadge = user.is_verified
+                ? `<span class="badge badge-active">已验证</span>`
+                : `<span class="badge" style="background: color-mix(in srgb, #fbbf24, transparent 90%); color: #fbbf24;">未验证</span>`;
             const actionButton = user.is_blocked
                 ? `<button class="btn btn-success btn-sm" data-id="${user.id}">解禁</button>`
                 : `<button class="btn btn-danger btn-sm" data-id="${user.id}">屏蔽</button>`;
+            const verifyButton = user.is_verified
+                ? `<button class="btn btn-sm" style="background: #f59e0b; color: white;" data-id="${user.id}">取消验证</button>`
+                : `<button class="btn btn-success btn-sm" data-id="${user.id}">通过验证</button>`;
             tr.innerHTML = `
                 <td>
                     <div class="user-info">
@@ -428,11 +434,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 </td>
                 <td><code>${user.id}</code></td>
                 <td>${statusBadge}</td>
+                <td>${verifyBadge}</td>
                 <td>${formatTime(user.last_seen)}</td>
                 <td>
                     <div class="user-actions">
                         <button class="btn btn-sm btn-primary view-chat-btn" data-id="${user.id}">查看聊天</button>
                         ${actionButton}
+                        ${verifyButton}
                     </div>
                 </td>
             `;
@@ -440,12 +448,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 openChatModal(user.id);
             });
 
-            tr.querySelector('.btn-danger, .btn-success').addEventListener('click', () => {
+            const blockBtn = tr.querySelector('.btn-danger, .btn-success');
+            blockBtn.addEventListener('click', () => {
                 toggleUserBlock(user.id, !user.is_blocked);
             });
+
+            const verifyBtn = tr.querySelectorAll('.btn-sm')[2];
+            verifyBtn.addEventListener('click', () => {
+                toggleUserVerify(user.id, !user.is_verified);
+            });
+
             userTbody.appendChild(tr);
         });
         renderPagination(data.page, data.total_pages, userPagination, updateUsersAndLoad);
+    }
+
+    async function toggleUserVerify(userId, shouldVerify) {
+        const action = shouldVerify ? 'verify' : 'unverify';
+        const title = shouldVerify ? '通过验证' : '取消验证';
+        const confirmMsg = shouldVerify ? '确定要通过此用户的验证吗？' : '确定要取消此用户的验证吗？';
+        const confirmStyle = shouldVerify ? 'btn-success' : 'btn-danger';
+        const confirmText = shouldVerify ? '通过' : '确认取消';
+        const confirmed = await customConfirm(title, confirmMsg, confirmText, confirmStyle);
+        if (!confirmed) return;
+        try {
+            await apiFetch(`/api/users/${userId}/${action}`, { method: 'POST' });
+            showToast(shouldVerify ? '用户已通过验证' : '用户验证已取消');
+            updateUsersAndLoad();
+        } catch (error) {
+            showToast('操作失败', 'error');
+        }
     }
 
     async function loadUsers() {

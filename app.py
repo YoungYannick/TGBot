@@ -530,6 +530,26 @@ def api_user_messages():
         ]
     })
 
+@app.route('/api/users/<int:user_id>/verify', methods=['POST'])
+@login_required
+def api_verify_user(user_id):
+    user = g.db.get(User, user_id)
+    if not user:
+        return jsonify({'error': '未找到用户'}), 404
+    user.is_verified = True
+    g.db.commit()
+    return jsonify({'success': True, 'is_verified': True})
+
+@app.route('/api/users/<int:user_id>/unverify', methods=['POST'])
+@login_required
+def api_unverify_user(user_id):
+    user = g.db.get(User, user_id)
+    if not user:
+        return jsonify({'error': '未找到用户'}), 404
+    user.is_verified = False
+    g.db.commit()
+    return jsonify({'success': True, 'is_verified': False})
+
 bot_process = None
 
 def is_bot_running():
