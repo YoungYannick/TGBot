@@ -148,6 +148,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         pageTitle.textContent = {
             dashboard: '仪表盘',
+            'bot-settings': '机器人设置',
+            'start-message': '欢迎消息',
             users: '用户管理',
             keywords: '屏蔽关键词'
         }[pageId];
