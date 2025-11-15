@@ -40,6 +40,7 @@ SH_TZ = ZoneInfo('Asia/Shanghai')
 def now_sh():
     return datetime.datetime.now(SH_TZ)
 
+
 def load_db_config():
     from database import SessionLocal, Config
     db = SessionLocal()
@@ -52,8 +53,12 @@ def load_db_config():
         'ADMIN_ID': c.admin_id,
         'VERIFICATION_ENABLED': c.verification_enabled,
         'VERIFICATION_TYPE': c.verification_type,
-        'VERIFICATION_DIFFICULTY': c.verification_difficulty
+        'VERIFICATION_DIFFICULTY': c.verification_difficulty,
+        'UPDATE_METHOD': c.update_method,
+        'WEBHOOK_DOMAIN': c.webhook_domain,
+        'WEBHOOK_SECRET': c.webhook_secret
     }
+
 
 VERIFICATION_DATA = {}
 
@@ -301,6 +306,7 @@ async def send_math_verification(chat_id: int, lang: str, difficulty: str, conte
         [InlineKeyboardButton(opt, callback_data=f"math_{opt}") for opt in options_list]
     ])
     await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
 
 async def send_image_verification(chat_id: int, lang: str, difficulty: str, context: ContextTypes.DEFAULT_TYPE):
     if difficulty == 'hell':
@@ -730,6 +736,7 @@ async def send_blocked_list_page(original_message, users, page, per_page):
     text, reply_markup = get_blocked_list_page_content(users, page, per_page)
     await original_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
+
 async def get_verify_menu_content(db_session):
     config = db_session.query(Config).first()
     if not config:
@@ -766,6 +773,7 @@ async def get_verify_menu_content(db_session):
         InlineKeyboardButton("❌ 关闭菜单", callback_data="vs_close")
     ])
     return text, InlineKeyboardMarkup(keyboard)
+
 
 async def verify_settings_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_session = SessionLocal()
@@ -813,6 +821,7 @@ async def verify_settings_callback_handler(update: Update, context: ContextTypes
         await query.answer("❌ 操作失败。")
     finally:
         db_session.close()
+
 
 async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import MessageMap
@@ -998,6 +1007,17 @@ async def set_admin_commands(app: Application):
     await app.bot.set_my_commands(user_commands)
 
 
+async def post_shutdown(application: Application):
+    bot_config = load_db_config()
+    if bot_config and bot_config.get('UPDATE_METHOD') == 'webhook':
+        logger.info("Gracefully shutting down: Deleting webhook...")
+        try:
+            await application.bot.delete_webhook()
+            logger.info("Webhook deleted successfully.")
+        except Exception as e:
+            logger.error(f"Failed to delete webhook during shutdown: {e}")
+
+
 def main():
     global ADMIN_ID
     from database import init_db
@@ -1012,7 +1032,8 @@ def main():
 
     ADMIN_ID = int(BOT_CONFIG['ADMIN_ID'])
 
-    app = Application.builder().token(BOT_CONFIG['BOT_TOKEN']).build()
+    app = Application.builder().token(BOT_CONFIG['BOT_TOKEN']).post_init(set_admin_commands).post_shutdown(
+        post_shutdown).build()
 
     admin_filter = filters.User(user_id=ADMIN_ID)
     app.add_handler(CommandHandler(
@@ -1021,42 +1042,66 @@ def main():
         admin_command_handler,
         filters=admin_filter
     ))
-
-    app.add_handler(CommandHandler(
-        "verify_settings",
-        verify_settings_menu_handler,
-        filters=admin_filter
-    ))
-
-    app.add_handler(CallbackQueryHandler(
-        verify_settings_callback_handler,
-        pattern="^vs_"
-    ))
-
-    app.add_handler(MessageHandler(
-        admin_filter & filters.REPLY & (~filters.COMMAND),
-        handle_admin_reply
-    ))
-
+    app.add_handler(CommandHandler("verify_settings", verify_settings_menu_handler, filters=admin_filter))
+    app.add_handler(CallbackQueryHandler(verify_settings_callback_handler, pattern="^vs_"))
+    app.add_handler(MessageHandler(admin_filter & filters.REPLY & (~filters.COMMAND), handle_admin_reply))
     app.add_handler(CallbackQueryHandler(simple_verification_callback, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(math_callback_handler, pattern="^math_"))
-
     user_filter = (~admin_filter) & filters.ChatType.PRIVATE
     app.add_handler(CommandHandler("start", start_handler, filters=user_filter))
-    app.add_handler(MessageHandler(
-        user_filter & (~filters.COMMAND),
-        check_verification_and_forward
-    ))
-
+    app.add_handler(MessageHandler(user_filter & (~filters.COMMAND), check_verification_and_forward))
     app.add_handler(CallbackQueryHandler(view_blocked_user_callback, pattern="^view_blocked_"))
     app.add_handler(CallbackQueryHandler(secondary_menu_callback, pattern="^(unblock_|return_to_list)"))
     app.add_handler(CallbackQueryHandler(blocked_page_callback, pattern="^blocked_page_"))
 
-    app.post_init = set_admin_commands
+    update_method = BOT_CONFIG.get('UPDATE_METHOD', 'polling')
+    try:
+        if update_method == 'webhook':
+            domain = BOT_CONFIG.get('WEBHOOK_DOMAIN')
+            secret = BOT_CONFIG.get('WEBHOOK_SECRET')
+            token = BOT_CONFIG.get('BOT_TOKEN')
 
-    logger.info("Bot is running...")
-    app.run_polling()
+            secret = secret if secret and secret.strip() else None
+            if not domain:
+                logger.error("Webhook 模式已启用，但未配置域名！将退回到 Polling 模式。")
+                update_method = 'polling'
+            else:
+                webhook_url = f"https://{domain}/{token}"
+                logger.info(f"Bot starting in WEBHOOK mode. URL: {webhook_url}")
+                app.run_webhook(
+                    listen="0.0.0.0",
+                    port=8443,
+                    url_path=token,
+                    webhook_url=webhook_url,
+                    secret_token=secret
+                )
 
+        if update_method == 'polling':
+            logger.info("Bot starting in POLLING mode...")
+            app.run_polling()
+
+
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped manually.")
+    finally:
+        if update_method == 'webhook':
+            logger.info("Cleaning up webhook...")
+            try:
+                temp_bot = Bot(BOT_CONFIG['BOT_TOKEN'])
+                import asyncio
+                async def delete_webhook(bot: Bot):
+                    try:
+                        await bot.delete_webhook()
+                        logger.info("Webhook cleaned up.")
+                    except Exception as e:
+                        logger.error(f"delete webhook failed: {e}")
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(delete_webhook(temp_bot))
+                else:
+                    asyncio.run(delete_webhook(temp_bot))
+            except Exception as e:
+                logger.error(f"Final attempt to delete webhook failed: {e}")
 
 if __name__ == "__main__":
     main()

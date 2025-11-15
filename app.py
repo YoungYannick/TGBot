@@ -6,6 +6,7 @@ import subprocess
 import psutil
 import sys
 import atexit
+import re
 from zoneinfo import ZoneInfo
 from flask import (
     Flask, render_template, request, redirect, url_for, session, g,
@@ -18,12 +19,20 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import SessionLocal, User, BlockedKeyword, SentMessage, init_db, Config, StartMessage
 
 from database import init_db
+
 init_db()
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 DATABASE_FILE = 'bot_data.db'
 SH_TZ = ZoneInfo('Asia/Shanghai')
+
+
+def is_valid_secret_token(token):
+    if not token:
+        return True
+    return bool(re.match("^[A-Za-z0-9_-]*$", token))
+
 
 def is_configured():
     from database import SessionLocal, Config
@@ -45,7 +54,10 @@ def get_config():
         'ADMIN_ID': c.admin_id,
         'WEB_PANEL_USER': c.web_user,
         'WEB_PANEL_PASS': c.web_pass,
-        'SECRET_KEY': c.secret_key
+        'SECRET_KEY': c.secret_key,
+        'UPDATE_METHOD': c.update_method,
+        'WEBHOOK_DOMAIN': c.webhook_domain,
+        'WEBHOOK_SECRET': c.webhook_secret,
     }
     db.close()
     return conf
@@ -58,11 +70,13 @@ def load_db_session():
             init_db()
         g.db = SessionLocal()
 
+
 @app.teardown_request
 def close_db_session(exception=None):
     db = g.get('db')
     if db is not None:
         db.close()
+
 
 @app.before_request
 def check_configuration():
@@ -70,6 +84,7 @@ def check_configuration():
         return redirect(url_for('setup'))
     if is_configured() and request.endpoint == 'setup':
         return redirect(url_for('login'))
+
 
 def login_required(view):
     @functools.wraps(view)
@@ -80,7 +95,9 @@ def login_required(view):
                 return redirect(url_for('login'))
             return redirect(url_for('login'))
         return view(**kwargs)
+
     return wrapped_view
+
 
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
@@ -91,10 +108,22 @@ def setup():
         admin_id = request.form.get('admin_id')
         web_user = request.form.get('web_user')
         web_pass_plain = request.form.get('web_pass')
+        update_method = request.form.get('update_method')
+        webhook_domain = request.form.get('webhook_domain', '').strip()
+        webhook_secret = request.form.get('webhook_secret', '').strip()
 
         if not all([bot_token, admin_id, web_user, web_pass_plain]):
-            flash('所有字段均为必填项。', 'error')
+            flash('所有必填字段均为必填项。', 'error')
             return render_template('setup.html')
+
+        if update_method == 'webhook' and not webhook_domain:
+            flash('使用 Webhook 模式时，Webhook 域名是必填项。', 'error')
+            return render_template('setup.html')
+
+        if update_method == 'webhook' and not is_valid_secret_token(webhook_secret):
+            flash('Webhook 密钥包含不允许的字符。只允许使用 A-Z, a-z, 0-9, _ 和 -', 'error')
+            return render_template('setup.html')
+
         try:
             int(admin_id)
         except ValueError:
@@ -116,7 +145,10 @@ def setup():
                 secret_key=secret_key,
                 verification_enabled=True,
                 verification_type='simple',
-                verification_difficulty='easy'
+                verification_difficulty='easy',
+                update_method=update_method,
+                webhook_domain=webhook_domain if update_method == 'webhook' else None,
+                webhook_secret=webhook_secret if update_method == 'webhook' else None,
             )
             db.add(cfg)
             db.commit()
@@ -129,6 +161,7 @@ def setup():
             flash(f'写入配置文件失败: {e}', 'error')
     return render_template('setup.html')
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if 'logged_in' in session:
@@ -137,13 +170,9 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password_plain = request.form['password']
-
         stored_user = config.get('WEB_PANEL_USER')
         stored_hash = config.get('WEB_PANEL_PASS')
-
-        if (username == stored_user and
-                stored_hash and
-                check_password_hash(stored_hash, password_plain)):
+        if (username == stored_user and stored_hash and check_password_hash(stored_hash, password_plain)):
             session['logged_in'] = True
             app.secret_key = config.get('SECRET_KEY')
             return redirect(url_for('dashboard'))
@@ -151,16 +180,19 @@ def login():
             flash('用户名或密码错误', 'error')
     return render_template('login.html')
 
+
 @app.route('/logout')
 def logout():
     session.pop('logged_in', None)
     return redirect(url_for('login'))
+
 
 @app.route('/')
 @login_required
 def dashboard():
     config = get_config()
     return render_template('dashboard.html', admin_user=config.get('WEB_PANEL_USER', 'Admin'))
+
 
 @app.route('/api/settings', methods=['GET'])
 @login_required
@@ -169,10 +201,17 @@ def api_get_settings():
     if not config:
         return jsonify({'error': 'Config not found'}), 404
     return jsonify({
+        'bot_token': config.bot_token,
+        'admin_id': config.admin_id,
+        'web_user': config.web_user,
         'verification_enabled': config.verification_enabled,
         'verification_type': config.verification_type,
         'verification_difficulty': config.verification_difficulty,
+        'update_method': config.update_method,
+        'webhook_domain': config.webhook_domain,
+        'webhook_secret': config.webhook_secret,
     })
+
 
 @app.route('/api/settings', methods=['POST'])
 @login_required
@@ -183,19 +222,71 @@ def api_save_settings():
     data = request.get_json()
 
     config.verification_enabled = bool(data.get('verification_enabled'))
-
     v_type = data.get('verification_type', 'simple')
-    if v_type not in ['simple', 'math', 'image']:
-        v_type = 'simple'
+    if v_type not in ['simple', 'math', 'image']: v_type = 'simple'
     config.verification_type = v_type
-
     v_diff = data.get('verification_difficulty', 'easy')
-    if v_diff not in ['easy', 'medium', 'hard', 'hell']:
-        v_diff = 'easy'
+    if v_diff not in ['easy', 'medium', 'hard', 'hell']: v_diff = 'easy'
     config.verification_difficulty = v_diff
 
+    update_method = data.get('update_method', 'polling')
+    if update_method not in ['polling', 'webhook']: update_method = 'polling'
+
+    webhook_domain = data.get('webhook_domain', '').strip()
+    webhook_secret = data.get('webhook_secret', '').strip()
+
+    if update_method == 'webhook' and not is_valid_secret_token(webhook_secret):
+        return jsonify({'error': 'Webhook 密钥包含不允许的字符。只允许使用 A-Z, a-z, 0-9, _ 和 -'}), 400
+
+    config.update_method = update_method
+    if update_method == 'webhook':
+        if not webhook_domain:
+            return jsonify({'error': 'Webhook 域名不能为空'}), 400
+        config.webhook_domain = webhook_domain
+        config.webhook_secret = webhook_secret
+    else:
+        config.webhook_domain = None
+        config.webhook_secret = None
+
     g.db.commit()
-    return jsonify({'success': True, 'message': '设置已保存！'})
+    restart_bot()
+    return jsonify({'success': True, 'message': '设置已保存！机器人正在重启以应用更改...'})
+
+
+@app.route('/api/core-settings', methods=['POST'])
+@login_required
+def api_save_core_settings():
+    config = g.db.query(Config).first()
+    if not config:
+        return jsonify({'error': 'Config not found'}), 404
+
+    data = request.get_json()
+
+    bot_token = data.get('bot_token', '').strip()
+    admin_id = data.get('admin_id', '').strip()
+    web_user = data.get('web_user', '').strip()
+    web_pass = data.get('web_pass', '')
+
+    if not all([bot_token, admin_id, web_user]):
+        return jsonify({'error': 'Bot Token, 管理员 UID 和 Web 用户名不能为空'}), 400
+
+    try:
+        int(admin_id)
+    except ValueError:
+        return jsonify({'error': '管理员 UID 必须是纯数字'}), 400
+
+    config.bot_token = bot_token
+    config.admin_id = admin_id
+    config.web_user = web_user
+
+    if web_pass:
+        config.web_pass = generate_password_hash(web_pass)
+
+    g.db.commit()
+    restart_bot()
+
+    return jsonify({'success': True, 'message': '核心设置已保存！机器人正在重启。如果修改了Web密码，您可能需要重新登录。'})
+
 
 @app.route('/api/start_messages', methods=['GET'])
 @login_required
@@ -206,6 +297,7 @@ def api_get_start_messages():
         'zh': msg_zh.content if msg_zh else '',
         'en': msg_en.content if msg_en else ''
     })
+
 
 @app.route('/api/start_messages', methods=['POST'])
 @login_required
@@ -229,6 +321,7 @@ def api_save_start_messages():
     g.db.commit()
     return jsonify({'success': True, 'message': '欢迎消息已保存！'})
 
+
 @app.route('/api/stats')
 @login_required
 def api_stats():
@@ -242,6 +335,7 @@ def api_stats():
         'verified_users': verified_users,
         'total_keywords': total_keywords
     })
+
 
 @app.route('/api/today_stats')
 @login_required
@@ -262,6 +356,7 @@ def api_today_stats():
         'dialog_users_today': dialog_users_count,
         'messages_today': messages_count
     })
+
 
 @app.route('/api/message_stats')
 @login_required
@@ -289,40 +384,6 @@ def api_message_stats():
     data = [{'date': d, 'count': counts[d]} for d in sorted(counts.keys())]
     return jsonify({'range_days': days, 'data': data})
 
-@app.route('/api/messages', methods=['POST'])
-@login_required
-def api_add_message():
-    data = request.get_json(force=True, silent=True) or {}
-    user_id = data.get('user_id')
-    message_text = data.get('message_text', '')
-    sent_at_in = data.get('sent_at')
-    if not user_id:
-        return jsonify({'error': '缺少 user_id'}), 400
-    db = g.db
-    user = db.get(User, int(user_id))
-    now_sh = datetime.datetime.now(SH_TZ)
-    if not user:
-        user = User(id=int(user_id), created_at=now_sh, last_seen=now_sh)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    if sent_at_in:
-        try:
-            sent_dt = datetime.datetime.fromisoformat(sent_at_in)
-            if sent_dt.tzinfo is None:
-                sent_dt = sent_dt.replace(tzinfo=SH_TZ)
-            sent_dt = sent_dt.astimezone(SH_TZ)
-        except Exception:
-            sent_dt = now_sh
-    else:
-        sent_dt = now_sh
-    sent_utc = sent_dt.astimezone(ZoneInfo('UTC'))
-    msg = SentMessage(user_id=int(user_id), message_text=message_text, sent_at=sent_utc)
-    db.add(msg)
-    user.last_seen = sent_utc
-    db.commit()
-    db.refresh(msg)
-    return jsonify({'success': True, 'message_id': msg.pk_id, 'sent_at': sent_dt.isoformat()}), 201
 
 @app.route('/api/keywords', methods=['GET'])
 @login_required
@@ -349,6 +410,7 @@ def api_get_keywords():
             for kw in keywords
         ]
     })
+
 
 @app.route('/api/keywords', methods=['POST'])
 @login_required
@@ -415,6 +477,7 @@ def api_add_keyword():
         } for o in existing_objs]
     }), (201 if added_objs else 200)
 
+
 @app.route('/api/keywords/<int:kw_id>', methods=['DELETE'])
 @login_required
 def api_delete_keyword(kw_id):
@@ -424,6 +487,7 @@ def api_delete_keyword(kw_id):
     g.db.delete(kw)
     g.db.commit()
     return jsonify({'success': True})
+
 
 @app.route('/api/users')
 @login_required
@@ -466,6 +530,7 @@ def api_get_users():
         ]
     })
 
+
 @app.route('/api/users/<int:user_id>/block', methods=['POST'])
 @login_required
 def api_block_user(user_id):
@@ -476,6 +541,7 @@ def api_block_user(user_id):
     g.db.commit()
     return jsonify({'success': True, 'is_blocked': True})
 
+
 @app.route('/api/users/<int:user_id>/unblock', methods=['POST'])
 @login_required
 def api_unblock_user(user_id):
@@ -485,6 +551,7 @@ def api_unblock_user(user_id):
     user.is_blocked = False
     g.db.commit()
     return jsonify({'success': True, 'is_blocked': False})
+
 
 @app.route('/api/user_messages')
 @login_required
@@ -530,6 +597,7 @@ def api_user_messages():
         ]
     })
 
+
 @app.route('/api/users/<int:user_id>/verify', methods=['POST'])
 @login_required
 def api_verify_user(user_id):
@@ -539,6 +607,7 @@ def api_verify_user(user_id):
     user.is_verified = True
     g.db.commit()
     return jsonify({'success': True, 'is_verified': True})
+
 
 @app.route('/api/users/<int:user_id>/unverify', methods=['POST'])
 @login_required
@@ -550,7 +619,9 @@ def api_unverify_user(user_id):
     g.db.commit()
     return jsonify({'success': True, 'is_verified': False})
 
+
 bot_process = None
+
 
 def is_bot_running():
     for p in psutil.process_iter(['pid', 'cmdline']):
@@ -575,6 +646,7 @@ def start_bot():
     else:
         print("[INFO] bot.py 已在运行，无需重复启动。")
 
+
 def stop_bot():
     global bot_process
     if bot_process and bot_process.poll() is None:
@@ -590,6 +662,12 @@ def stop_bot():
         except:
             pass
     print("[INFO] bot.py 已停止。")
+
+
+def restart_bot():
+    stop_bot()
+    start_bot()
+
 
 atexit.register(stop_bot)
 
