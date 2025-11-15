@@ -146,6 +146,8 @@ def setup():
                 verification_enabled=True,
                 verification_type='simple',
                 verification_difficulty='easy',
+                verification_expiry_unit='once',
+                verification_expiry_value=1,
                 update_method=update_method,
                 webhook_domain=webhook_domain if update_method == 'webhook' else None,
                 webhook_secret=webhook_secret if update_method == 'webhook' else None,
@@ -207,6 +209,8 @@ def api_get_settings():
         'verification_enabled': config.verification_enabled,
         'verification_type': config.verification_type,
         'verification_difficulty': config.verification_difficulty,
+        'verification_expiry_unit': config.verification_expiry_unit,
+        'verification_expiry_value': config.verification_expiry_value,
         'update_method': config.update_method,
         'webhook_domain': config.webhook_domain,
         'webhook_secret': config.webhook_secret,
@@ -228,6 +232,18 @@ def api_save_settings():
     v_diff = data.get('verification_difficulty', 'easy')
     if v_diff not in ['easy', 'medium', 'hard', 'hell']: v_diff = 'easy'
     config.verification_difficulty = v_diff
+
+    expiry_unit = data.get('verification_expiry_unit', 'once')
+    valid_units = ['once', 'seconds', 'minutes', 'hours', 'days', 'months', 'years']
+    if expiry_unit not in valid_units:
+        expiry_unit = 'once'
+    config.verification_expiry_unit = expiry_unit
+
+    expiry_value = data.get('verification_expiry_value', 1)
+    try:
+        config.verification_expiry_value = int(expiry_value) if expiry_value else 1
+    except (ValueError, TypeError):
+        config.verification_expiry_value = 1
 
     update_method = data.get('update_method', 'polling')
     if update_method not in ['polling', 'webhook']: update_method = 'polling'
@@ -525,7 +541,9 @@ def api_get_users():
                 'lang_code': u.lang_code,
                 'is_blocked': u.is_blocked,
                 'is_verified': u.is_verified,
-                'last_seen': u.last_seen.isoformat() if u.last_seen else None
+                'last_seen': u.last_seen.isoformat() if u.last_seen else None,
+                'created_at': u.created_at.isoformat() if u.created_at else None,
+                'verified_at': u.verified_at.isoformat() if u.verified_at else None
             } for u in users
         ]
     })
@@ -605,6 +623,7 @@ def api_verify_user(user_id):
     if not user:
         return jsonify({'error': '未找到用户'}), 404
     user.is_verified = True
+    user.verified_at = datetime.datetime.now(ZoneInfo('UTC'))
     g.db.commit()
     return jsonify({'success': True, 'is_verified': True})
 
@@ -616,6 +635,7 @@ def api_unverify_user(user_id):
     if not user:
         return jsonify({'error': '未找到用户'}), 404
     user.is_verified = False
+    user.verified_at = None
     g.db.commit()
     return jsonify({'success': True, 'is_verified': False})
 
@@ -680,7 +700,7 @@ if __name__ == "__main__":
         print(f"请在浏览器中打开 http://{host}:{port}/setup 完成设置。")
         print("=" * 50)
     else:
-        start_bot()
+        # start_bot()
         app.secret_key = get_config().get('SECRET_KEY', os.urandom(24))
         print("=" * 50)
         print("Web 面板已启动。")

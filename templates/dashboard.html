@@ -171,6 +171,22 @@
                             </select>
                             <small>(数学: 1/2/3/4位数 | 图形: 4/6/8/10位)</small>
                         </div>
+                        <div class="form-group">
+                            <label for="verification_expiry_unit">验证有效期</label>
+                            <div class="input-group">
+                                <input type="number" id="verification_expiry_value" min="1" style="flex-grow: 0.5;">
+                                <select id="verification_expiry_unit" style="flex-grow: 1;">
+                                    <option value="once">仅首次</option>
+                                    <option value="seconds">秒</option>
+                                    <option value="minutes">分</option>
+                                    <option value="hours">时</option>
+                                    <option value="days">天</option>
+                                    <option value="months">月</option>
+                                    <option value="years">年</option>
+                                </select>
+                            </div>
+                            <small>设置用户通过验证后的有效时间，过期后需要重新验证。“仅首次”表示永久有效。</small>
+                        </div>
                     </div>
                 </div>
 
@@ -240,10 +256,10 @@
                             <thead>
                                 <tr>
                                     <th>用户名 / 姓名</th>
-                                    <th>用户 ID</th>
+                                    <th>用户ID / 语言</th>
                                     <th>状态</th>
                                     <th>验证状态</th>
-                                    <th>最后活跃</th>
+                                    <th>创建 / 验证时间</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>

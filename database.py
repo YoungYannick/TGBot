@@ -20,6 +20,7 @@ class User(Base):
     is_blocked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True))
     last_seen = Column(DateTime(timezone=True))
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     sent_messages = relationship("SentMessage", back_populates="sender")
 
 
@@ -62,6 +63,8 @@ class Config(Base):
     verification_enabled = Column(Boolean, default=True)
     verification_type = Column(String, default='simple')
     verification_difficulty = Column(String, default='easy')
+    verification_expiry_value = Column(Integer, nullable=True)
+    verification_expiry_unit = Column(String, default='once')
     update_method = Column(String, default='polling')
     webhook_domain = Column(String, nullable=True)
     webhook_secret = Column(String, nullable=True)

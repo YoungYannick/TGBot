@@ -10,6 +10,7 @@ from fractions import Fraction
 from zoneinfo import ZoneInfo
 from html import escape as escape_html
 from captcha.image import ImageCaptcha
+from dateutil.relativedelta import relativedelta
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, Message
 from telegram.ext import (
@@ -41,6 +42,10 @@ def now_sh():
     return datetime.datetime.now(SH_TZ)
 
 
+def now_utc():
+    return datetime.datetime.now(ZoneInfo('UTC'))
+
+
 def load_db_config():
     from database import SessionLocal, Config
     db = SessionLocal()
@@ -54,6 +59,8 @@ def load_db_config():
         'VERIFICATION_ENABLED': c.verification_enabled,
         'VERIFICATION_TYPE': c.verification_type,
         'VERIFICATION_DIFFICULTY': c.verification_difficulty,
+        'VERIFICATION_EXPIRY_UNIT': c.verification_expiry_unit,
+        'VERIFICATION_EXPIRY_VALUE': c.verification_expiry_value,
         'UPDATE_METHOD': c.update_method,
         'WEBHOOK_DOMAIN': c.webhook_domain,
         'WEBHOOK_SECRET': c.webhook_secret
@@ -65,7 +72,7 @@ VERIFICATION_DATA = {}
 
 def get_or_create_user(session, user_data: dict):
     user = session.get(User, user_data['id'])
-    now = now_sh().astimezone(datetime.timezone.utc)
+    now = now_utc()
 
     if user:
         user.username = user_data.get('username')
@@ -113,7 +120,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = user.language_code or 'en'
     db_session = SessionLocal()
     try:
-        db_user = get_or_create_user(db_session, user.to_dict())
+        get_or_create_user(db_session, user.to_dict())
     finally:
         db_session.close()
 
@@ -131,13 +138,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
-    db_session = SessionLocal()
-    try:
-        db_user = get_user_from_db(db_session, user.id)
-        if not db_user.is_verified:
-            await prompt_verification_if_needed(db_session, db_user, user.id, lang, context)
-    finally:
-        db_session.close()
+    await check_verification_and_forward(update, context)
 
 
 async def prompt_verification_if_needed(db_session, db_user, user_id, lang, context):
@@ -145,6 +146,7 @@ async def prompt_verification_if_needed(db_session, db_user, user_id, lang, cont
 
     if not bot_config.get('VERIFICATION_ENABLED'):
         db_user.is_verified = True
+        db_user.verified_at = now_utc()
         db_session.commit()
         await context.bot.send_message(user_id, "✅ 管理员已关闭验证，您已自动通过。")
         return
@@ -353,6 +355,7 @@ async def simple_verification_callback(update: Update, context: ContextTypes.DEF
         try:
             user = get_or_create_user(db_session, query.from_user.to_dict())
             user.is_verified = True
+            user.verified_at = now_utc()
             db_session.commit()
 
             if user_id in VERIFICATION_DATA:
@@ -395,6 +398,7 @@ async def math_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 user = get_or_create_user(db_session, query.from_user.to_dict())
                 user.is_verified = True
+                user.verified_at = now_utc()
                 db_session.commit()
 
                 if user_id in VERIFICATION_DATA:
@@ -431,7 +435,7 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
 
     user = update.effective_user
     lang = user.language_code or 'en'
-
+    bot_config = load_db_config()
     db_session = SessionLocal()
     try:
         db_user = get_or_create_user(db_session, user.to_dict())
@@ -443,6 +447,31 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
                 await message.reply_text("🚫 You have been blocked by the administrator and cannot send messages.")
             return
 
+        if db_user.is_verified:
+            unit = bot_config.get('VERIFICATION_EXPIRY_UNIT', 'once')
+            value = bot_config.get('VERIFICATION_EXPIRY_VALUE', 1)
+
+            if unit != 'once' and db_user.verified_at:
+                verified_at_aware = db_user.verified_at.replace(tzinfo=ZoneInfo('UTC'))
+
+                expiry_date = verified_at_aware
+                if unit == 'seconds':
+                    expiry_date += datetime.timedelta(seconds=value)
+                elif unit == 'minutes':
+                    expiry_date += datetime.timedelta(minutes=value)
+                elif unit == 'hours':
+                    expiry_date += datetime.timedelta(hours=value)
+                elif unit == 'days':
+                    expiry_date += datetime.timedelta(days=value)
+                elif unit == 'months':
+                    expiry_date += relativedelta(months=value)
+                elif unit == 'years':
+                    expiry_date += relativedelta(years=value)
+
+                if now_utc() > expiry_date:
+                    db_user.is_verified = False
+                    db_session.commit()
+
         stored_data = VERIFICATION_DATA.get(user.id)
         if (stored_data and
                 stored_data['type'] == 'image' and
@@ -451,6 +480,7 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
 
             if message.text.lower() == stored_data['answer'].lower():
                 db_user.is_verified = True
+                db_user.verified_at = now_utc()
                 db_session.commit()
                 del VERIFICATION_DATA[user.id]
                 if lang.startswith('zh'):
@@ -463,12 +493,21 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
                 else:
                     await message.reply_text("❌ CAPTCHA incorrect. Please try again.")
 
-                bot_config = load_db_config()
                 await send_image_verification(user.id, lang, bot_config.get('VERIFICATION_DIFFICULTY', 'easy'), context)
             return
 
         if not db_user.is_verified:
             await prompt_verification_if_needed(db_session, db_user, user.id, lang, context)
+            if update.message and update.message.text and update.message.text.startswith('/start'):
+                return
+
+            if lang.startswith('zh'):
+                await message.reply_text("请先完成验证再发送消息。")
+            else:
+                await message.reply_text("Please complete the verification before sending messages.")
+            return
+
+        if update.message and update.message.text and update.message.text.startswith('/start'):
             return
 
         text_to_check = message.text or message.caption
@@ -503,7 +542,7 @@ async def check_verification_and_forward(update: Update, context: ContextTypes.D
                 user_id=user.id,
                 message_text=(message_content[:500] + '...') if message_content and len(
                     message_content) > 500 else message_content,
-                sent_at=now_sh().astimezone(datetime.timezone.utc)
+                sent_at=now_utc()
             ))
 
             db_session.commit()
@@ -1095,6 +1134,7 @@ def main():
                         logger.info("Webhook cleaned up.")
                     except Exception as e:
                         logger.error(f"delete webhook failed: {e}")
+
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     loop.create_task(delete_webhook(temp_bot))
@@ -1102,6 +1142,7 @@ def main():
                     asyncio.run(delete_webhook(temp_bot))
             except Exception as e:
                 logger.error(f"Final attempt to delete webhook failed: {e}")
+
 
 if __name__ == "__main__":
     main()

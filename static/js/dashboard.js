@@ -219,6 +219,10 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('verification_type').value = settings.verification_type;
             document.getElementById('verification_difficulty').value = settings.verification_difficulty;
 
+            document.getElementById('verification_expiry_unit').value = settings.verification_expiry_unit || 'once';
+            document.getElementById('verification_expiry_value').value = settings.verification_expiry_value || 1;
+            toggleExpiryValueInput();
+
             document.getElementById('update_method_dashboard').value = settings.update_method;
             document.getElementById('webhook_domain_dashboard').value = settings.webhook_domain || '';
             document.getElementById('webhook_secret_dashboard').value = settings.webhook_secret || '';
@@ -233,6 +237,8 @@ document.addEventListener('DOMContentLoaded', () => {
             verification_enabled: document.getElementById('verification_enabled').checked,
             verification_type: document.getElementById('verification_type').value,
             verification_difficulty: document.getElementById('verification_difficulty').value,
+            verification_expiry_unit: document.getElementById('verification_expiry_unit').value,
+            verification_expiry_value: parseInt(document.getElementById('verification_expiry_value').value, 10),
             update_method: document.getElementById('update_method_dashboard').value,
             webhook_domain: document.getElementById('webhook_domain_dashboard').value,
             webhook_secret: document.getElementById('webhook_secret_dashboard').value,
@@ -274,10 +280,25 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(response.message || '核心设置已保存');
             document.getElementById('core_web_pass').value = '';
             document.getElementById('core_web_pass_confirm').value = '';
-        } catch (error) {
+        } catch (error)
+        {
             showToast(`保存核心设置失败: ${error.message}`, 'error');
         }
     }
+
+    function toggleExpiryValueInput() {
+        const unitSelect = document.getElementById('verification_expiry_unit');
+        const valueInput = document.getElementById('verification_expiry_value');
+        if (unitSelect.value === 'once') {
+            valueInput.disabled = true;
+            valueInput.style.backgroundColor = 'var(--hover-bg-color)';
+        } else {
+            valueInput.disabled = false;
+            valueInput.style.backgroundColor = 'var(--input-bg-color)';
+        }
+    }
+    document.getElementById('verification_expiry_unit').addEventListener('change', toggleExpiryValueInput);
+
 
     function toggleWebhookDashboardFields() {
         const method = document.getElementById('update_method_dashboard').value;
@@ -485,6 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const verifyButton = user.is_verified
                 ? `<button class="btn btn-sm" style="background: #f59e0b; color: white;" data-id="${user.id}">取消验证</button>`
                 : `<button class="btn btn-success btn-sm" data-id="${user.id}">通过验证</button>`;
+
             tr.innerHTML = `
                 <td>
                     <div class="user-info">
@@ -492,10 +514,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span>${escapeHTML(user.first_name || '')} ${escapeHTML(user.last_name || '')}</span>
                     </div>
                 </td>
-                <td><code>${user.id}</code></td>
+                <td>
+                    <div class="user-info">
+                        <code>${user.id}</code>
+                        <span>${escapeHTML(user.lang_code || 'N/A')}</span>
+                    </div>
+                </td>
                 <td>${statusBadge}</td>
                 <td>${verifyBadge}</td>
-                <td>${formatTime(user.last_seen)}</td>
+                <td>
+                    <div class="user-info">
+                        <span>${formatTime(user.created_at)}</span>
+                        <strong style="color: var(--success-color);">${formatTime(user.verified_at)}</strong>
+                    </div>
+                </td>
                 <td>
                     <div class="user-actions">
                         <button class="btn btn-sm btn-primary view-chat-btn" data-id="${user.id}">查看聊天</button>
@@ -608,15 +640,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const ymd = `${partMap.year}/${partMap.month}/${partMap.day}`;
             const hms = `${partMap.hour}:${partMap.minute}:${partMap.second}`;
 
-            const ms = String(date.getMilliseconds()).padStart(3, '0');
-
-            return `${ymd} ${hms}.${ms}`;
+            return `${ymd} ${hms}`;
 
         } catch (e) {
             try {
                 const date = new Date(isoString);
                 const oldFormatted = date.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
-                return oldFormatted.replace(/-/g, '/');
+                return oldFormatted.replace(/-/g, '/').split('.')[0];
             } catch (e2) {
                  return isoString;
             }
