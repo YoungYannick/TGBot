@@ -700,7 +700,7 @@ if __name__ == "__main__":
         print(f"请在浏览器中打开 http://{host}:{port}/setup 完成设置。")
         print("=" * 50)
     else:
-        # start_bot()
+        start_bot()
         app.secret_key = get_config().get('SECRET_KEY', os.urandom(24))
         print("=" * 50)
         print("Web 面板已启动。")
